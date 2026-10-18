@@ -41,6 +41,7 @@ import { formatCurrency } from '../utils/currency';
 import { storage } from '../utils/storage';
 import { Admin as AdminApi } from '../services/api';
 import { Order, Product, User, OrderPricingSummary, PricingLine, RelanceLog } from '../types';
+import { CATALOG_CATEGORIES } from '../data/catalog';
 
 type AdminPanel = 'panel-overview' | 'panel-products' | 'panel-orders' | 'panel-clients';
 
@@ -913,16 +914,6 @@ export const Admin: React.FC = () => {
           {/* ================= PANEL 2: GESTION PRODUITS & PRIX DE RÉFÉRENCE ================= */}
           {activePanel === 'panel-products' && (
             <div id="panel-products" className="panel active space-y-6">
-              {/* Bannière de confidentialité du prix */}
-              <div className="p-4 rounded-2xl bg-blue-50/80 border border-blue-200 flex items-start gap-3 text-xs text-blue-950">
-                <Shield className="w-5 h-5 text-[var(--primary)] shrink-0 mt-0.5" />
-                <div>
-                  <h3 className="font-bold">Confidentialité stricte des prix de référence</h3>
-                  <p className="text-blue-800 mt-0.5 leading-relaxed">
-                    Les prix renseignés ci-dessous sont exclusivement réservés à l'administration de CYM Pharma. <strong>Aucun prix de référence n'est communiqué ni transmis au frontend public du client.</strong> Les modifications sont appliquées immédiatement au moteur de chiffrage.
-                  </p>
-                </div>
-              </div>
 
               <div className="admin-card p-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
@@ -2008,16 +1999,19 @@ export const Admin: React.FC = () => {
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
                   <label className="form-label text-xs font-semibold text-slate-700 block mb-1">
-                    Catégorie principale *
+                    Catégorie *
                   </label>
-                  <input
-                    type="text"
+                  <select
                     required
                     value={newProdCat}
                     onChange={(e) => setNewProdCat(e.target.value)}
-                    placeholder="ex : Consommables, Aiguilles, Gants..."
                     className="form-input text-xs"
-                  />
+                  >
+                    <option value="">Sélectionner une catégorie</option>
+                    {CATALOG_CATEGORIES.map((cat) => (
+                      <option key={cat.slug} value={cat.name}>{cat.name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="form-label text-xs font-semibold text-slate-700 block mb-1">

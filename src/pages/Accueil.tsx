@@ -167,7 +167,7 @@ export const Accueil: React.FC = () => {
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">Support médical</h3>
                   <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                    Pharmaciens et conseillers biomédicaux à votre écoute 6j/7.
+                    une écoute à votre service 6j/7.
                   </p>
                 </div>
               </div>

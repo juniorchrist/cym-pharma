@@ -205,7 +205,7 @@ export const Catalogue: React.FC = () => {
                       {count} {count > 1 ? 'articles' : 'article'}
                     </span>
                     <span className="font-bold text-[var(--primary)] inline-flex items-center gap-1 group-hover:translate-x-1 transition-transform">
-                      <span>Explorer</span>
+                      <span>Voir plus</span>
                       <ArrowRight className="w-3.5 h-3.5" strokeWidth={2} />
                     </span>
                   </div>
