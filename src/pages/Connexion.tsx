@@ -105,11 +105,12 @@ export const Connexion: React.FC = () => {
                   Email ou téléphone professionnel
                 </label>
                 <div className="relative flex items-center">
-                  <span className="absolute left-3.5 text-slate-400 pointer-events-none">
-                    <Mail className="w-[15px] h-[15px]" strokeWidth={1.75} />
+                  <span className="absolute left-3.5 text-slate-400 pointer-events-none z-10 flex items-center">
+                    <Mail className="w-4 h-4" strokeWidth={1.75} />
                   </span>
                   <input
-                    className="input-field"
+                    className="input-field !pl-11"
+                    style={{ paddingLeft: '2.75rem' }}
                     id="identifier"
                     name="email"
                     placeholder="ex: pharmacie@officine.ci"

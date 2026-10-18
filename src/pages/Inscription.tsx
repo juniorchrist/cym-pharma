@@ -14,6 +14,31 @@ import { PageShell } from '../components/layout/PageShell';
 import { PasswordInput } from '../components/ui/PasswordInput';
 import { useAuth } from '../context/AuthContext';
 
+export const VILLES_INSCRIPTION = [
+  'Anoumaba',
+  'Abobo',
+  'Aboisso',
+  'Adiaké',
+  'Adjamé',
+  'Akakro/Ehania',
+  'Anyama',
+  'Bassam',
+  'Bonoua',
+  'Bingerville',
+  'Cechi',
+  'Cocody',
+  'Ehania',
+  'Koumassi',
+  'Marcory',
+  'Marcory zone-3',
+  'Maféré',
+  "M'batto",
+  'Port Bouet',
+  'Plateau',
+  'Treichville',
+  'Yopougon',
+] as const;
+
 export const Inscription: React.FC = () => {
   const [step, setStep] = useState<1 | 2>(1);
   const [client, setClient] = useState('');
@@ -21,6 +46,7 @@ export const Inscription: React.FC = () => {
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [commune, setCommune] = useState('Cocody');
+  const [customCommune, setCustomCommune] = useState('');
 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -58,6 +84,10 @@ export const Inscription: React.FC = () => {
       setError('Veuillez saisir une adresse email valide.');
       return;
     }
+    if (commune === 'Autre' && !customCommune.trim()) {
+      setError('Veuillez préciser le nom de votre ville ou localité.');
+      return;
+    }
 
     setStep(2);
   };
@@ -82,13 +112,14 @@ export const Inscription: React.FC = () => {
     setLoading(true);
 
     try {
+      const finalCommune = commune === 'Autre' ? customCommune.trim() : commune;
       const payload = {
         name: responsable.trim(),
         client: client.trim(),
         responsable: responsable.trim(),
         email: email.trim(),
         phone: phone.trim(),
-        commune,
+        commune: finalCommune,
         password,
         establishmentName: client.trim(),
       };
@@ -276,23 +307,45 @@ export const Inscription: React.FC = () => {
                   {/* Commune */}
                   <div className="flex flex-col gap-1.5 text-left">
                     <label className="text-xs font-semibold text-slate-800" htmlFor="commune">
-                      Commune / Localité <span className="text-[var(--primary)]">*</span>
+                      Ville / Localité <span className="text-[var(--primary)]">*</span>
                     </label>
                     <select
                       id="commune"
                       value={commune}
-                      onChange={(e) => setCommune(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setCommune(val);
+                        if (val !== 'Autre') {
+                          setCustomCommune('');
+                        }
+                      }}
                       className="form-input cursor-pointer"
                     >
-                      <option value="Cocody">Abidjan — Cocody (Riviera, 2 Plateaux)</option>
-                      <option value="Plateau">Abidjan — Plateau</option>
-                      <option value="Marcory">Abidjan — Marcory / Zone 4</option>
-                      <option value="Yopougon">Abidjan — Yopougon</option>
-                      <option value="Treichville">Abidjan — Treichville</option>
-                      <option value="Bouaké">Bouaké</option>
-                      <option value="San-Pédro">San-Pédro</option>
-                      <option value="Autre">Autre localité (Côte d'Ivoire)</option>
+                      {VILLES_INSCRIPTION.map((ville) => (
+                        <option key={ville} value={ville}>
+                          {ville}
+                        </option>
+                      ))}
+                      <option value="Autre">Autre (préciser la ville…)</option>
                     </select>
+
+                    {commune === 'Autre' && (
+                      <div className="flex flex-col gap-1.5 mt-2 animate-fadeIn">
+                        <label className="text-xs font-semibold text-slate-700" htmlFor="customCommune">
+                          Précisez votre ville / localité <span className="text-[var(--primary)]">*</span>
+                        </label>
+                        <input
+                          id="customCommune"
+                          className="form-input"
+                          placeholder="Ex: Yamoussoukro, Daloa, San-Pédro..."
+                          required
+                          type="text"
+                          value={customCommune}
+                          onChange={(e) => setCustomCommune(e.target.value)}
+                          autoFocus
+                        />
+                      </div>
+                    )}
                   </div>
 
                   {/* CTA Etape 1 */}
