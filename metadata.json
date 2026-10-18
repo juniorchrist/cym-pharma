@@ -1,0 +1,6 @@
+{
+  "name": "CYM Pharma — Dispositifs Médicaux & Équipements B2B Côte d'Ivoire",
+  "description": "Plateforme B2B de vente de dispositifs médicaux, consommables et équipements pour les structures de santé en Côte d'Ivoire.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
