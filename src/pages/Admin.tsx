@@ -752,11 +752,7 @@ export const Admin: React.FC = () => {
                 Catalogue hospitalier B2B, chiffrage des commandes et facturation réglementaire Abidjan.
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="pill-badge" style={{ background: 'var(--success-tint)', color: 'var(--success)' }}>
-                Base Connectée ({productsList.length} articles)
-              </span>
-            </div>
+
           </div>
 
           {/* ================= PANEL 1: OVERVIEW ================= */}
