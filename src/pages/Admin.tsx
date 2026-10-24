@@ -34,6 +34,7 @@ import {
   RefreshCw,
   Clock,
   MessageCircle,
+  Boxes,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -42,8 +43,9 @@ import { storage } from '../utils/storage';
 import { Admin as AdminApi } from '../services/api';
 import { Order, Product, User, OrderPricingSummary, PricingLine, RelanceLog } from '../types';
 import { CATALOG_CATEGORIES } from '../data/catalog';
+import { InventaireIndex } from './inventory';
 
-type AdminPanel = 'panel-overview' | 'panel-products' | 'panel-orders' | 'panel-clients';
+type AdminPanel = 'panel-overview' | 'panel-products' | 'panel-orders' | 'panel-clients' | 'panel-inventory';
 
 export const Admin: React.FC = () => {
   const { logout } = useAuth();
@@ -204,6 +206,7 @@ export const Admin: React.FC = () => {
     'panel-products': 'Gestion Produits & Prix de Référence (Privé Admin)',
     'panel-orders': 'Chiffrage des Commandes & Facturation',
     'panel-clients': 'Gestion des Utilisateurs',
+    'panel-inventory': 'Gestion de l\'Inventaire & des Stocks (Privé Admin)',
   }[activePanel];
 
   // ── PRODUCT ACTIONS ──
@@ -669,6 +672,19 @@ export const Admin: React.FC = () => {
                     <Package className="w-3.5 h-3.5" strokeWidth={2} />
                   </span>
                   <span>Gestion Produits</span>
+                </button>
+                <button
+                  type="button"
+                  className={`admin-nav-item ${activePanel === 'panel-inventory' ? 'active' : ''}`}
+                  onClick={() => {
+                    setActivePanel('panel-inventory');
+                    setSidebarOpen(false);
+                  }}
+                >
+                  <span className="nav-icon-wrap">
+                    <Boxes className="w-3.5 h-3.5" strokeWidth={2} />
+                  </span>
+                  <span>Inventaire &amp; Stocks</span>
                 </button>
 
                 <button
@@ -1276,6 +1292,14 @@ export const Admin: React.FC = () => {
           )}
 
           {/* ================= PANEL 4: UTILISATEURS & RELANCES AUTOMATIQUES ================= */}
+
+          {/* ================= PANEL 5: INVENTAIRE & STOCKS (ADMIN PRIVÉ) ================= */}
+          {activePanel === 'panel-inventory' && (
+            <div id="panel-inventory" className="panel active space-y-6">
+              <InventaireIndex />
+            </div>
+          )}
+
           {activePanel === 'panel-clients' && (
             <div id="panel-clients" className="panel active space-y-6">
               {/* Automation Engine Banner */}
@@ -1880,15 +1904,21 @@ export const Admin: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Stock disponible
+                    Gestion du Stock
                   </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={editProdStock}
-                    onChange={(e) => setEditProdStock(e.target.value)}
-                    className="form-input text-xs font-mono"
-                  />
+                  <div className="flex items-center gap-2 pt-1 text-xs text-slate-500">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditProductModalOpen(false);
+                        setActivePanel('panel-inventory');
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200 hover:bg-emerald-100 transition cursor-pointer"
+                    >
+                      <Boxes className="w-3.5 h-3.5" />
+                      <span>Gérer dans le module Inventaire</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 

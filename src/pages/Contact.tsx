@@ -124,9 +124,9 @@ export const Contact: React.FC = () => {
                       <MapPin className="w-4 h-4" strokeWidth={1.8} />
                     </div>
                     <div>
-                      <p className="font-semibold text-slate-900">Siège &amp; Entrepôt Logistique</p>
+                      <p className="font-semibold text-slate-900">Siège</p>
                       <p className="text-slate-600 mt-0.5 leading-relaxed">
-                        Cocody Riviera 3, Boulevard Arsène Usher Assouan, Abidjan
+                        Port-bouet centre , cité policière, Abidjan
                       </p>
                     </div>
                   </div>
@@ -138,7 +138,7 @@ export const Contact: React.FC = () => {
                     <div>
                       <p className="font-semibold text-slate-900">Standard Commandes &amp; Devis</p>
                       <p className="text-slate-600 font-mono text-xs mt-0.5">
-                        +225 27 22 49 10 80 / +225 07 09 55 40 20
+                        +225 05 94 84 18 18 
                       </p>
                     </div>
                   </div>
@@ -150,7 +150,7 @@ export const Contact: React.FC = () => {
                     <div>
                       <p className="font-semibold text-slate-900">Cellule Proforma &amp; Facturation</p>
                       <p className="text-slate-600 mt-0.5 font-mono text-xs">
-                        commandes@cympharma.ci
+                        
                       </p>
                     </div>
                   </div>
@@ -165,7 +165,7 @@ export const Contact: React.FC = () => {
                     className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition-colors shadow-xs"
                   >
                     <MessageCircle className="w-4 h-4" strokeWidth={2} />
-                    <span>Échanger sur WhatsApp Business (+225 07 09 55 40 20)</span>
+                    <span>Échanger sur WhatsApp Business (+225 05 94 84 18 18  )</span>
                   </a>
                 </div>
               </div>

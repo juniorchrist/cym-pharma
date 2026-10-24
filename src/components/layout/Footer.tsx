@@ -1,10 +1,8 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Phone, MapPin, Lock } from 'lucide-react';
-import { AdminLockModal } from '../admin/AdminLockModal';
 
 export const Footer: React.FC = () => {
-  const [adminModalOpen, setAdminModalOpen] = useState(false);
   const [logoError, setLogoError] = useState(false);
 
   return (
@@ -116,14 +114,14 @@ export const Footer: React.FC = () => {
                 </li>
               </ul>
               <div className="pt-2 group inline-block">
-                <button
-                  type="button"
-                  onClick={() => setAdminModalOpen(true)}
+                <Link
+                  to="/admin"
                   className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white border border-slate-200 text-xs font-medium text-slate-500 opacity-60 group-hover:opacity-100 hover:opacity-100 hover:border-[var(--primary)] hover:text-[var(--primary)] transition-all cursor-pointer"
+                  title="Accès réservé à l'administration"
                 >
                   <Lock className="w-3 h-3" strokeWidth={2} />
                   <span>Admin</span>
-                </button>
+                </Link>
               </div>
             </div>
           </div>
@@ -136,12 +134,6 @@ export const Footer: React.FC = () => {
           </div>
         </div>
       </footer>
-
-      {/* Admin Lock Modal */}
-      <AdminLockModal
-        isOpen={adminModalOpen}
-        onClose={() => setAdminModalOpen(false)}
-      />
     </>
   );
 };

@@ -1,0 +1,50 @@
+# =====================================================================
+# CYM Pharma — .htaccess pour le dossier api/
+# Hébergement mutualisé : o2switch (production) / InfinityFree (test)
+# =====================================================================
+
+# ── Sécurité de base ────────────────────────────────────────────────
+Options -Indexes -ExecCGI
+ServerSignature Off
+
+# ── Encodage ────────────────────────────────────────────────────────
+AddDefaultCharset UTF-8
+
+# ── PHP : masquer les erreurs en production ─────────────────────────
+# php_flag  display_errors Off
+# php_value error_reporting 0
+
+# ── CORS géré par PHP (bootstrap.php) — pas de doublon ici ─────────
+
+# ── Réécriture des URL vers index.php (router front) ────────────────
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /api/
+
+  # Passer les vrais fichiers et dossiers directement
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Tout le reste → index.php (routeur PHP)
+  RewriteRule ^ index.php [L]
+</IfModule>
+
+# ── Bloquer l'accès direct aux fichiers sensibles ───────────────────
+<FilesMatch "(env\.php|bootstrap\.php|\.env|composer\.(json|lock)|package\.json)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order deny,allow
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# ── Headers de sécurité ─────────────────────────────────────────────
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set X-XSS-Protection "1; mode=block"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>

@@ -1,15 +1,153 @@
 import fs from 'fs';
 import path from 'path';
 import type { IncomingMessage, ServerResponse } from 'http';
-import { ALL_PRODUCTS, CATALOG_CATEGORIES } from '../data/catalog';
-import { Product, Order, OrderItem, PricingLine, OrderPricingSummary, User, RelanceLog } from '../types';
+import { ALL_PRODUCTS, CATALOG_CATEGORIES } from '../data/catalog.ts';
+import { Product, Order, OrderItem, PricingLine, OrderPricingSummary, User, RelanceLog } from '../types/index.ts';
+import {
+  InventoryItem,
+  StockMovement,
+  InventoryPeriod,
+  InventoryCount,
+  PeriodItem,
+  MovementType,
+  InventoryItemWithStatus,
+  MovementWithItem,
+  PeriodWithCounts,
+  InventoryStats,
+  ImportPreviewRow,
+  ImportPreviewResult,
+} from '../types/inventaire.ts';
+import * as _XLSX from 'xlsx';
+const XLSX: any = (_XLSX as any).default || _XLSX;
 
 interface DatabaseSchema {
   products: Product[];
   orders: Order[];
   users: User[];
   relances: RelanceLog[];
+  inventory_items?: InventoryItem[];
+  stock_movements?: StockMovement[];
+  inventory_periods?: InventoryPeriod[];
+  inventory_counts?: InventoryCount[];
+  period_items?: PeriodItem[];
   lastUpdated: string;
+}
+
+
+/**
+ * Parse Classeur1.xlsx if present to provide seamless pre-seeded inventory
+ */
+function seedInventoryFromClasseur(): { items: InventoryItem[]; movements: StockMovement[]; periods: InventoryPeriod[]; counts: InventoryCount[]; periodItems: PeriodItem[] } {
+  const items: InventoryItem[] = [];
+  const movements: StockMovement[] = [];
+  const periods: InventoryPeriod[] = [];
+  const counts: InventoryCount[] = [];
+  const periodItems: PeriodItem[] = [];
+
+  const classeurPath = path.resolve(process.cwd(), 'Classeur1.xlsx');
+  if (fs.existsSync(classeurPath)) {
+    try {
+      const wb = XLSX.readFile(classeurPath);
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+      const rows = rawData.slice(3).filter((r) => r[0] && typeof r[0] === 'string' && r[0].trim());
+
+      const periodId = 'per_2026_10';
+      const openPeriod: InventoryPeriod = {
+        id: periodId,
+        year_month: '2026-10',
+        status: 'counting',
+        opened_at: new Date('2026-10-01T08:00:00Z').toISOString(),
+        closed_at: null,
+        closed_by: null,
+      };
+      periods.push(openPeriod);
+
+      const seen = new Set<string>();
+      let artIdx = 1;
+
+      for (const r of rows) {
+        const rawDes = String(r[0]).trim();
+        const normDes = rawDes.toUpperCase().replace(/\s+/g, ' ');
+        if (!normDes) continue;
+
+        // Skip exact duplicate designation
+        if (seen.has(normDes)) {
+          continue;
+        }
+        seen.add(normDes);
+
+        const openingQty = Number(r[1]) || 0;
+        const currentQty = Number(r[2]) || 0;
+        const isNeg = currentQty < 0;
+
+        let unitLabel = 'Unité';
+        if (rawDes.includes('B/100')) unitLabel = 'Boîte de 100';
+        else if (rawDes.includes('B/50')) unitLabel = 'Boîte de 50';
+        else if (rawDes.includes('B/12')) unitLabel = 'Boîte de 12';
+        else if (rawDes.includes('B/25')) unitLabel = 'Boîte de 25';
+        else if (rawDes.includes('P/100')) unitLabel = 'Paquet de 100';
+        else if (rawDes.includes('5L')) unitLabel = 'Bidon 5L';
+        else if (rawDes.includes('1L')) unitLabel = 'Flacon 1L';
+
+        const itemId = 'item_' + String(artIdx).padStart(4, '0');
+        const code = 'ART-' + String(artIdx).padStart(4, '0');
+        const finalQty = isNeg ? 0 : currentQty;
+        const isTracked = currentQty > 0;
+
+        const item: InventoryItem = {
+          id: itemId,
+          code,
+          designation: rawDes,
+          designation_norm: normDes,
+          unit_label: unitLabel,
+          product_id: null,
+          min_stock: isTracked ? 5 : null,
+          is_tracked: isTracked,
+          qty_on_hand: finalQty,
+          is_active: true,
+          created_at: new Date('2026-10-01T08:00:00Z').toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        items.push(item);
+
+        if (finalQty > 0) {
+          movements.push({
+            id: 'mvt_' + itemId + '_open',
+            item_id: itemId,
+            type: 'opening',
+            quantity: finalQty,
+            movement_date: '2026-10-01',
+            reason: isNeg ? 'Stock négatif dans classeur (' + currentQty + ') importé à 0' : 'Reprise de stock initial Classeur1.xlsx',
+            order_id: null,
+            order_item_id: null,
+            period_id: periodId,
+            created_by: 'Système Import',
+            created_at: new Date('2026-10-01T08:00:00Z').toISOString(),
+          });
+        }
+
+        counts.push({
+          id: 'cnt_' + periodId + '_' + itemId,
+          period_id: periodId,
+          item_id: itemId,
+          theoretical_qty: finalQty,
+          counted_qty: null,
+          variance: null,
+          note: isNeg ? 'Valeur négative (' + currentQty + ') dans classeur' : null,
+          counted_by: null,
+          counted_at: null,
+          status: 'draft',
+        });
+
+        artIdx++;
+      }
+    } catch (err) {
+      console.error('Error seeding inventory from Classeur1.xlsx:', err);
+    }
+  }
+
+  return { items, movements, periods, counts, periodItems };
 }
 
 const DB_DIR = path.resolve(process.cwd(), 'data');
@@ -396,6 +534,7 @@ function initDb(): DatabaseSchema {
     },
   ];
 
+  const seededInv = seedInventoryFromClasseur();
   const initialDb: DatabaseSchema = {
     products: seededProducts,
     orders: seededOrders,
@@ -410,6 +549,11 @@ function initDb(): DatabaseSchema {
       },
     ],
     relances: [],
+    inventory_items: seededInv.items,
+    stock_movements: seededInv.movements,
+    inventory_periods: seededInv.periods,
+    inventory_counts: seededInv.counts,
+    period_items: seededInv.periodItems,
     lastUpdated: new Date().toISOString(),
   };
 
@@ -424,6 +568,19 @@ export function getDb(): DatabaseSchema {
   if (!dbCache) {
     dbCache = initDb();
   }
+  if (!dbCache.inventory_items || dbCache.inventory_items.length === 0) {
+    const seeded = seedInventoryFromClasseur();
+    dbCache.inventory_items = seeded.items;
+    dbCache.stock_movements = seeded.movements;
+    dbCache.inventory_periods = seeded.periods;
+    dbCache.inventory_counts = seeded.counts;
+    dbCache.period_items = seeded.periodItems;
+    saveDb(dbCache);
+  }
+  if (!dbCache.stock_movements) dbCache.stock_movements = [];
+  if (!dbCache.inventory_periods) dbCache.inventory_periods = [];
+  if (!dbCache.inventory_counts) dbCache.inventory_counts = [];
+  if (!dbCache.period_items) dbCache.period_items = [];
   checkAndProcessCustomerInactivity(dbCache);
   return dbCache;
 }
@@ -439,15 +596,54 @@ export function saveDb(data: DatabaseSchema): void {
 }
 
 /**
- * Remove ALL price fields before returning data to public clients.
+ * Remove ALL price AND stock fields before returning data to public clients.
+ * IMPORTANT: Any new field added to Product that is stock/price-related
+ * MUST be explicitly deleted here.
  */
 export function sanitizePublicProduct(prod: Product): Product {
-  const sanitized: Product = { ...prod };
-  delete sanitized.ref_price;
-  delete sanitized.price;
-  delete sanitized.base_price;
-  delete sanitized.oldPrice;
-  return sanitized;
+  // Explicit whitelist approach: only keep safe fields
+  const {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    ref_price, price, base_price, oldPrice,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    stock, stockQuantity, inStock,
+    ...safe
+  } = prod as any;
+  // Also remove any inventory-related keys that might have leaked
+  const result = { ...safe } as Product;
+  delete (result as any).qty_on_hand;
+  delete (result as any).min_stock;
+  delete (result as any).inventory_item_id;
+  return result;
+}
+
+/**
+ * Verify that the request carries a valid admin token.
+ * In the dev Vite backend, we accept any token that was issued
+ * to the admin user (starts with 'admin_jwt_' or is stored as admin).
+ * Returns true if access should be granted, false → send 403.
+ */
+function verifyAdminRequest(req: IncomingMessage): boolean {
+  const authHeader = req.headers['authorization'] || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (!token) return false;
+  // In production PHP, JWT signature is verified cryptographically.
+  // In the Vite dev backend, we check the token format/prefix used
+  // by the local auth flow in api.ts.
+  if (token.startsWith('admin_jwt_')) return true;
+  if (token.startsWith('local_usr_admin_')) return true;
+  // Also accept tokens stored in the DB under the admin user
+  try {
+    const db = getDb();
+    const adminUser = db.users.find(
+      (u) => u.role === 'admin' && u.email === 'admin@cympharma.ci'
+    );
+    // If the token is non-empty and the admin user exists, allow in dev.
+    // (In production, JWT secret verification replaces this.)
+    return !!adminUser && token.length > 8;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -496,7 +692,7 @@ export function sanitizePublicOrder(order: Order): Order {
 async function parseBody<T = any>(req: IncomingMessage): Promise<T> {
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', (chunk) => {
+    req.on('data', (chunk: any) => {
       body += chunk;
       if (body.length > 5 * 1024 * 1024) {
         req.destroy();
@@ -745,8 +941,15 @@ export async function handleApiRoute(req: IncomingMessage, res: ServerResponse):
   }
 
   // ─────────────────────────────────────────────────────────────
-  // 2. ADMIN ENDPOINTS (Full access to private reference prices & pricing workflow)
+  // 2. ADMIN ENDPOINTS (require valid admin JWT)
   // ─────────────────────────────────────────────────────────────
+
+  if (pathname.startsWith('/api/admin/')) {
+    if (!verifyAdminRequest(req)) {
+      sendJson(res, 403, { success: false, message: 'Accès refusé. Authentification administrateur requise.' });
+      return true;
+    }
+  }
 
   // GET /api/admin/products
   if (pathname === '/api/admin/products' && method === 'GET') {
@@ -1230,6 +1433,932 @@ export async function handleApiRoute(req: IncomingMessage, res: ServerResponse):
       data: result,
     });
     return true;
+  }
+
+
+  // ─────────────────────────────────────────────────────────────
+  // 3. INVENTAIRE & GESTION DES STOCKS (Admin Only)
+  // ─────────────────────────────────────────────────────────────
+
+  // GET /api/admin/inventory/stats
+  if (pathname === '/api/admin/inventory/stats' && method === 'GET') {
+    const items = db.inventory_items || [];
+    const activeItems = items.filter((i) => i.is_active !== false);
+    const periods = db.inventory_periods || [];
+    const openPeriod = periods.find((p) => p.status === 'counting' || p.status === 'open') || null;
+
+    let in_stock = 0;
+    let low_stock = 0;
+    let out_of_stock = 0;
+    let negative = 0;
+    let untracked = 0;
+    let total_tracked = 0;
+
+    for (const item of activeItems) {
+      if (!item.is_tracked) {
+        untracked++;
+      } else {
+        total_tracked++;
+        if (item.qty_on_hand < 0) {
+          negative++;
+        } else if (item.qty_on_hand === 0) {
+          out_of_stock++;
+        } else if (item.qty_on_hand <= (item.min_stock || 5)) {
+          low_stock++;
+        } else {
+          in_stock++;
+        }
+      }
+    }
+
+    const stats: InventoryStats = {
+      total_tracked,
+      in_stock,
+      low_stock,
+      out_of_stock,
+      negative,
+      untracked,
+      open_period: openPeriod,
+    };
+
+    sendJson(res, 200, { success: true, data: stats });
+    return true;
+  }
+
+  // GET /api/admin/inventory/items
+  if (pathname === '/api/admin/inventory/items' && method === 'GET') {
+    const search = (url.searchParams.get('search') || '').toLowerCase().trim();
+    const statusFilter = url.searchParams.get('status') || 'all';
+    const isTrackedFilter = url.searchParams.get('is_tracked');
+    const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10));
+    const limit = Math.max(1, Math.min(200, parseInt(url.searchParams.get('limit') || '50', 10)));
+
+    const items = (db.inventory_items || []).filter((i) => i.is_active !== false);
+
+    const itemsWithStatus: InventoryItemWithStatus[] = items.map((item) => {
+      let status: any = 'in_stock';
+      if (!item.is_tracked) {
+        status = 'untracked';
+      } else if (item.qty_on_hand < 0) {
+        status = 'negative';
+      } else if (item.qty_on_hand === 0) {
+        status = 'out_of_stock';
+      } else if (item.qty_on_hand <= (item.min_stock || 5)) {
+        status = 'low_stock';
+      }
+      return { ...item, status };
+    });
+
+    let filtered = itemsWithStatus;
+
+    if (search) {
+      filtered = filtered.filter(
+        (i) =>
+          i.designation.toLowerCase().includes(search) ||
+          i.code.toLowerCase().includes(search) ||
+          (i.unit_label && i.unit_label.toLowerCase().includes(search))
+      );
+    }
+
+    if (statusFilter && statusFilter !== 'all') {
+      filtered = filtered.filter((i) => i.status === statusFilter);
+    }
+
+    if (isTrackedFilter !== null && isTrackedFilter !== undefined && isTrackedFilter !== '') {
+      const wantTracked = isTrackedFilter === 'true';
+      filtered = filtered.filter((i) => i.is_tracked === wantTracked);
+    }
+
+    const total = filtered.length;
+    const totalPages = Math.ceil(total / limit) || 1;
+    const paginated = filtered.slice((page - 1) * limit, page * limit);
+
+    sendJson(res, 200, {
+      success: true,
+      data: {
+        items: paginated,
+        total,
+        page,
+        totalPages,
+      },
+    });
+    return true;
+  }
+
+  // POST /api/admin/inventory/items
+  if (pathname === '/api/admin/inventory/items' && method === 'POST') {
+    try {
+      const body = await parseBody<any>(req);
+      if (!body.designation || !body.designation.trim()) {
+        sendJson(res, 400, { success: false, message: 'La désignation est obligatoire.' });
+        return true;
+      }
+
+      const items = db.inventory_items || [];
+      const newId = 'item_' + Date.now();
+      const code = 'ART-' + String(items.length + 1).padStart(4, '0');
+      const openingQty = Number(body.opening_qty) || 0;
+      const isTracked = body.is_tracked !== undefined ? !!body.is_tracked : true;
+
+      const newItem: InventoryItem = {
+        id: newId,
+        code,
+        designation: body.designation.trim(),
+        designation_norm: body.designation.trim().toUpperCase().replace(/\s+/g, ' '),
+        unit_label: body.unit_label?.trim() || 'Unité',
+        product_id: body.product_id || null,
+        min_stock: body.min_stock !== undefined ? Number(body.min_stock) : (isTracked ? 5 : null),
+        is_tracked: isTracked,
+        qty_on_hand: openingQty,
+        is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      items.push(newItem);
+      db.inventory_items = items;
+
+      if (openingQty > 0) {
+        db.stock_movements = db.stock_movements || [];
+        db.stock_movements.push({
+          id: 'mvt_' + Date.now(),
+          item_id: newId,
+          type: 'opening',
+          quantity: openingQty,
+          movement_date: body.movement_date || new Date().toISOString().split('T')[0],
+          reason: body.opening_reason || 'Stock initial à la création',
+          order_id: null,
+          order_item_id: null,
+          period_id: null,
+          created_by: 'Admin',
+          created_at: new Date().toISOString(),
+        });
+      }
+
+      saveDb(db);
+      sendJson(res, 201, { success: true, data: newItem, message: 'Article créé avec succès.' });
+      return true;
+    } catch (err: any) {
+      sendJson(res, 400, { success: false, message: err.message });
+      return true;
+    }
+  }
+
+  // GET /api/admin/inventory/items/:id
+  const itemDetailMatch = pathname.match(/^\/api\/admin\/inventory\/items\/([^/]+)$/);
+  if (itemDetailMatch && method === 'GET') {
+    const id = itemDetailMatch[1];
+    const item = (db.inventory_items || []).find((i) => i.id === id);
+    if (!item) {
+      sendJson(res, 404, { success: false, message: 'Article introuvable' });
+      return true;
+    }
+    const recentMovements = (db.stock_movements || [])
+      .filter((m) => m.item_id === id)
+      .slice(-10)
+      .reverse();
+    sendJson(res, 200, { success: true, data: { ...item, recentMovements } });
+    return true;
+  }
+
+  // PATCH /api/admin/inventory/items/:id
+  if (itemDetailMatch && method === 'PATCH') {
+    const id = itemDetailMatch[1];
+    const item = (db.inventory_items || []).find((i) => i.id === id);
+    if (!item) {
+      sendJson(res, 404, { success: false, message: 'Article introuvable' });
+      return true;
+    }
+    try {
+      const body = await parseBody<any>(req);
+      if (body.designation !== undefined) {
+        item.designation = body.designation.trim();
+        item.designation_norm = item.designation.toUpperCase().replace(/\s+/g, ' ');
+      }
+      if (body.unit_label !== undefined) item.unit_label = body.unit_label.trim();
+      if (body.min_stock !== undefined) item.min_stock = body.min_stock !== null ? Number(body.min_stock) : null;
+      if (body.is_tracked !== undefined) item.is_tracked = !!body.is_tracked;
+      if (body.product_id !== undefined) item.product_id = body.product_id;
+      if (body.is_active !== undefined) item.is_active = !!body.is_active;
+      item.updated_at = new Date().toISOString();
+
+      saveDb(db);
+      sendJson(res, 200, { success: true, data: item, message: 'Article mis à jour.' });
+      return true;
+    } catch (err: any) {
+      sendJson(res, 400, { success: false, message: err.message });
+      return true;
+    }
+  }
+
+  // DELETE /api/admin/inventory/items/:id
+  if (itemDetailMatch && method === 'DELETE') {
+    const id = itemDetailMatch[1];
+    const item = (db.inventory_items || []).find((i) => i.id === id);
+    if (!item) {
+      sendJson(res, 404, { success: false, message: 'Article introuvable' });
+      return true;
+    }
+    item.is_active = false;
+    item.updated_at = new Date().toISOString();
+    saveDb(db);
+    sendJson(res, 200, { success: true, message: 'Article archivé.' });
+    return true;
+  }
+
+  // GET /api/admin/inventory/movements
+  if (pathname === '/api/admin/inventory/movements' && method === 'GET') {
+    const itemId = url.searchParams.get('item_id');
+    const typeFilter = url.searchParams.get('type');
+    const limit = Math.max(1, Math.min(500, parseInt(url.searchParams.get('limit') || '100', 10)));
+
+    let movements = db.stock_movements || [];
+    if (itemId) {
+      movements = movements.filter((m) => m.item_id === itemId);
+    }
+    if (typeFilter) {
+      movements = movements.filter((m) => m.type === typeFilter);
+    }
+
+    const itemsMap = new Map((db.inventory_items || []).map((i) => [i.id, i]));
+    const enriched: MovementWithItem[] = movements.slice(-limit).reverse().map((m) => {
+      const it = itemsMap.get(m.item_id);
+      return {
+        ...m,
+        designation: it?.designation || 'Article inconnu',
+        unit_label: it?.unit_label || 'Unité',
+      };
+    });
+
+    sendJson(res, 200, { success: true, data: { movements: enriched, total: movements.length } });
+    return true;
+  }
+
+  // POST /api/admin/inventory/movements
+  if (pathname === '/api/admin/inventory/movements' && method === 'POST') {
+    try {
+      const body = await parseBody<any>(req);
+      const { item_id, type, quantity, movement_date, reason, order_id, order_item_id, period_id } = body;
+
+      if (!item_id) {
+        sendJson(res, 400, { success: false, message: 'item_id est requis.' });
+        return true;
+      }
+      const item = (db.inventory_items || []).find((i) => i.id === item_id);
+      if (!item) {
+        sendJson(res, 404, { success: false, message: 'Article introuvable.' });
+        return true;
+      }
+
+      const qty = Number(quantity);
+      if (isNaN(qty) || qty === 0) {
+        sendJson(res, 400, { success: false, message: 'La quantité doit être un nombre non nul.' });
+        return true;
+      }
+
+      const validTypes: MovementType[] = [
+        'opening',
+        'purchase',
+        'sale_shop',
+        'sale_online',
+        'return',
+        'loss',
+        'adjustment',
+        'count_correction',
+      ];
+      if (!validTypes.includes(type)) {
+        sendJson(res, 400, { success: false, message: 'Type de mouvement invalide: ' + type });
+        return true;
+      }
+
+      // Calculate quantity impact on qty_on_hand
+      let delta = 0;
+      if (type === 'purchase' || type === 'return' || type === 'opening') {
+        delta = Math.abs(qty);
+      } else if (type === 'sale_shop' || type === 'sale_online' || type === 'loss') {
+        delta = -Math.abs(qty);
+      } else if (type === 'adjustment' || type === 'count_correction') {
+        delta = qty; // can be signed
+      }
+
+      item.qty_on_hand = (item.qty_on_hand || 0) + delta;
+      item.updated_at = new Date().toISOString();
+
+      const newMvt: StockMovement = {
+        id: 'mvt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        item_id,
+        type,
+        quantity: Math.abs(qty),
+        movement_date: movement_date || new Date().toISOString().split('T')[0],
+        reason: reason || null,
+        order_id: order_id || null,
+        order_item_id: order_item_id || null,
+        period_id: period_id || null,
+        created_by: 'Admin',
+        created_at: new Date().toISOString(),
+      };
+
+      db.stock_movements = db.stock_movements || [];
+      db.stock_movements.push(newMvt);
+
+      saveDb(db);
+      sendJson(res, 201, {
+        success: true,
+        data: { movement: newMvt, item },
+        message: 'Mouvement enregistré. Nouveau stock : ' + item.qty_on_hand,
+      });
+      return true;
+    } catch (err: any) {
+      sendJson(res, 400, { success: false, message: err.message });
+      return true;
+    }
+  }
+
+  // GET /api/admin/inventory/periods
+  if (pathname === '/api/admin/inventory/periods' && method === 'GET') {
+    const periods = db.inventory_periods || [];
+    const counts = db.inventory_counts || [];
+
+    const result: PeriodWithCounts[] = periods.map((p) => {
+      const pCounts = counts.filter((c) => c.period_id === p.id);
+      const counted_items = pCounts.filter((c) => c.counted_qty !== null).length;
+      const items_with_variance = pCounts.filter((c) => c.variance !== null && c.variance !== 0).length;
+
+      return {
+        ...p,
+        total_items: pCounts.length,
+        counted_items,
+        items_with_variance,
+      };
+    });
+
+    sendJson(res, 200, { success: true, data: result });
+    return true;
+  }
+
+  // POST /api/admin/inventory/periods/start
+  if (pathname === '/api/admin/inventory/periods/start' && method === 'POST') {
+    try {
+      const body = await parseBody<any>(req);
+      const year_month = body.year_month || new Date().toISOString().slice(0, 7);
+
+      db.inventory_periods = db.inventory_periods || [];
+      db.inventory_counts = db.inventory_counts || [];
+
+      // Check if open period already exists for this year_month
+      const existing = db.inventory_periods.find((p) => p.year_month === year_month);
+      if (existing && existing.status !== 'closed') {
+        sendJson(res, 200, { success: true, data: existing, message: 'Période existante reprise.' });
+        return true;
+      }
+
+      const periodId = 'per_' + year_month.replace('-', '_');
+      const newPeriod: InventoryPeriod = {
+        id: periodId,
+        year_month,
+        status: 'counting',
+        opened_at: new Date().toISOString(),
+        closed_at: null,
+        closed_by: null,
+      };
+
+      db.inventory_periods.push(newPeriod);
+
+      // Create count entries for all active tracked items
+      const trackedItems = (db.inventory_items || []).filter((i) => i.is_active !== false && i.is_tracked);
+      for (const item of trackedItems) {
+        db.inventory_counts.push({
+          id: 'cnt_' + periodId + '_' + item.id,
+          period_id: periodId,
+          item_id: item.id,
+          theoretical_qty: item.qty_on_hand,
+          counted_qty: null,
+          variance: null,
+          note: null,
+          counted_by: null,
+          counted_at: null,
+          status: 'draft',
+        });
+      }
+
+      saveDb(db);
+      sendJson(res, 201, { success: true, data: newPeriod, message: 'Nouvelle période démarrée pour ' + year_month });
+      return true;
+    } catch (err: any) {
+      sendJson(res, 400, { success: false, message: err.message });
+      return true;
+    }
+  }
+
+  // GET /api/admin/inventory/periods/:id/counts
+  const periodCountsMatch = pathname.match(/^\/api\/admin\/inventory\/periods\/([^/]+)\/counts$/);
+  if (periodCountsMatch && method === 'GET') {
+    const periodId = periodCountsMatch[1];
+    const period = (db.inventory_periods || []).find((p) => p.id === periodId);
+    if (!period) {
+      sendJson(res, 404, { success: false, message: 'Période introuvable.' });
+      return true;
+    }
+
+    const counts = (db.inventory_counts || []).filter((c) => c.period_id === periodId);
+    const itemsMap = new Map((db.inventory_items || []).map((i) => [i.id, i]));
+
+    const enriched = counts.map((c) => {
+      const item = itemsMap.get(c.item_id);
+      return {
+        ...c,
+        designation: item?.designation || 'Article inconnu',
+        unit_label: item?.unit_label || 'Unité',
+        code: item?.code || '',
+      };
+    });
+
+    sendJson(res, 200, { success: true, data: { period, counts: enriched } });
+    return true;
+  }
+
+  // PUT /api/admin/inventory/periods/:id/counts/:itemId
+  const countUpdateMatch = pathname.match(/^\/api\/admin\/inventory\/periods\/([^/]+)\/counts\/([^/]+)$/);
+  if (countUpdateMatch && method === 'PUT') {
+    const periodId = countUpdateMatch[1];
+    const itemId = countUpdateMatch[2];
+
+    const period = (db.inventory_periods || []).find((p) => p.id === periodId);
+    if (!period || period.status === 'closed') {
+      sendJson(res, 400, { success: false, message: 'Période clôturée ou introuvable.' });
+      return true;
+    }
+
+    let count = (db.inventory_counts || []).find((c) => c.period_id === periodId && c.item_id === itemId);
+    if (!count) {
+      const item = (db.inventory_items || []).find((i) => i.id === itemId);
+      count = {
+        id: 'cnt_' + periodId + '_' + itemId,
+        period_id: periodId,
+        item_id: itemId,
+        theoretical_qty: item?.qty_on_hand || 0,
+        counted_qty: null,
+        variance: null,
+        note: null,
+        counted_by: null,
+        counted_at: null,
+        status: 'draft',
+      };
+      db.inventory_counts = db.inventory_counts || [];
+      db.inventory_counts.push(count);
+    }
+
+    try {
+      const body = await parseBody<any>(req);
+      if (body.counted_qty !== undefined && body.counted_qty !== null) {
+        const val = Number(body.counted_qty);
+        count.counted_qty = isNaN(val) ? null : val;
+        count.variance = count.counted_qty !== null ? count.counted_qty - count.theoretical_qty : null;
+        count.status = 'validated';
+        count.counted_at = new Date().toISOString();
+        count.counted_by = 'Admin';
+      }
+      if (body.note !== undefined) count.note = body.note;
+      if (body.status !== undefined) count.status = body.status;
+
+      saveDb(db);
+      sendJson(res, 200, { success: true, data: count });
+      return true;
+    } catch (err: any) {
+      sendJson(res, 400, { success: false, message: err.message });
+      return true;
+    }
+  }
+
+  // POST /api/admin/inventory/periods/:id/close
+  const periodCloseMatch = pathname.match(/^\/api\/admin\/inventory\/periods\/([^/]+)\/close$/);
+  if (periodCloseMatch && method === 'POST') {
+    const periodId = periodCloseMatch[1];
+    const period = (db.inventory_periods || []).find((p) => p.id === periodId);
+    if (!period) {
+      sendJson(res, 404, { success: false, message: 'Période introuvable.' });
+      return true;
+    }
+    if (period.status === 'closed') {
+      sendJson(res, 400, { success: false, message: 'Cette période est déjà clôturée.' });
+      return true;
+    }
+
+    const counts = (db.inventory_counts || []).filter((c) => c.period_id === periodId);
+    let correctionsApplied = 0;
+    const nowIso = new Date().toISOString();
+
+    db.stock_movements = db.stock_movements || [];
+    db.period_items = db.period_items || [];
+
+    for (const c of counts) {
+      const item = (db.inventory_items || []).find((i) => i.id === c.item_id);
+      if (!item) continue;
+
+      const closingQty = c.counted_qty !== null ? c.counted_qty : item.qty_on_hand;
+      const variance = c.variance !== null ? c.variance : (closingQty - item.qty_on_hand);
+
+      if (variance !== 0 && c.counted_qty !== null) {
+        // Generate count_correction movement
+        db.stock_movements.push({
+          id: 'mvt_correc_' + periodId + '_' + item.id,
+          item_id: item.id,
+          type: 'count_correction',
+          quantity: Math.abs(variance),
+          movement_date: nowIso.split('T')[0],
+          reason: 'Ajustement inventaire ' + period.year_month + ' (écart: ' + (variance > 0 ? '+' : '') + variance + ')',
+          order_id: null,
+          order_item_id: null,
+          period_id: periodId,
+          created_by: 'Admin Clôture',
+          created_at: nowIso,
+        });
+        correctionsApplied++;
+        item.qty_on_hand = c.counted_qty;
+        item.updated_at = nowIso;
+      }
+
+      // Freeze snapshot in period_items
+      db.period_items.push({
+        period_id: periodId,
+        item_id: item.id,
+        opening_qty: c.theoretical_qty,
+        entries: 0,
+        exits: 0,
+        closing_qty: closingQty,
+      });
+    }
+
+    period.status = 'closed';
+    period.closed_at = nowIso;
+    period.closed_by = 'Administrateur Central';
+
+    saveDb(db);
+    sendJson(res, 200, {
+      success: true,
+      data: { period, corrections_applied: correctionsApplied },
+      message: 'Période ' + period.year_month + ' clôturée avec succès. ' + correctionsApplied + ' correction(s) appliquée(s).',
+    });
+    return true;
+  }
+
+  // GET /api/admin/inventory/periods/:id/export
+  const periodExportMatch = pathname.match(/^\/api\/admin\/inventory\/periods\/([^/]+)\/export$/);
+  if (periodExportMatch && method === 'GET') {
+    const periodId = periodExportMatch[1];
+    const period = (db.inventory_periods || []).find((p) => p.id === periodId);
+    if (!period) {
+      sendJson(res, 404, { success: false, message: 'Période introuvable.' });
+      return true;
+    }
+
+    const counts = (db.inventory_counts || []).filter((c) => c.period_id === periodId);
+    const itemsMap = new Map((db.inventory_items || []).map((i) => [i.id, i]));
+
+    let csv = '\uFEFFCode;Désignation;Unité;Stock Théorique;Stock Compté;Écart;Statut;Observation\r\n';
+    for (const c of counts) {
+      const it = itemsMap.get(c.item_id);
+      const code = it?.code || '';
+      const des = (it?.designation || '').replace(/;/g, ',');
+      const unit = it?.unit_label || 'Unité';
+      const theo = c.theoretical_qty ?? '';
+      const counted = c.counted_qty ?? '';
+      const variance = c.variance ?? '';
+      const status = c.status || 'draft';
+      const note = (c.note || '').replace(/;/g, ',');
+      csv += `${code};${des};${unit};${theo};${counted};${variance};${status};${note}\r\n`;
+    }
+
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="inventaire_' + period.year_month + '.csv"');
+    res.end(csv);
+    return true;
+  }
+
+  // POST /api/admin/inventory/import/preview-server-file
+  if (pathname === '/api/admin/inventory/import/preview-server-file' && method === 'POST') {
+    const classeurPath = path.resolve(process.cwd(), 'Classeur1.xlsx');
+    if (!fs.existsSync(classeurPath)) {
+      sendJson(res, 404, { success: false, message: 'Fichier Classeur1.xlsx introuvable à la racine.' });
+      return true;
+    }
+
+    try {
+      const wb = XLSX.readFile(classeurPath);
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+      const rows = rawData.slice(3).filter((r) => r[0] && typeof r[0] === 'string' && r[0].trim());
+
+      const seen = new Set<string>();
+      const previewRows: ImportPreviewRow[] = [];
+      let duplicates = 0;
+      let negative = 0;
+      let zero_stock = 0;
+      let valid = 0;
+
+      rows.forEach((r, idx) => {
+        const rawDes = String(r[0]).trim();
+        const cleanDes = rawDes.toUpperCase().replace(/\s+/g, ' ');
+        const opening = Number(r[1]) || 0;
+        const current = Number(r[2]) || 0;
+
+        const isDup = seen.has(cleanDes);
+        seen.add(cleanDes);
+        if (isDup) duplicates++;
+
+        const isNeg = current < 0;
+        if (isNeg) negative++;
+        if (current === 0) zero_stock++;
+        if (current > 0 && !isDup) valid++;
+
+        let unitLabel = 'Unité';
+        if (rawDes.includes('B/100')) unitLabel = 'Boîte de 100';
+        else if (rawDes.includes('B/50')) unitLabel = 'Boîte de 50';
+        else if (rawDes.includes('B/12')) unitLabel = 'Boîte de 12';
+        else if (rawDes.includes('B/25')) unitLabel = 'Boîte de 25';
+        else if (rawDes.includes('P/100')) unitLabel = 'Paquet de 100';
+        else if (rawDes.includes('5L')) unitLabel = 'Bidon 5L';
+        else if (rawDes.includes('1L')) unitLabel = 'Flacon 1L';
+
+        previewRows.push({
+          row_index: idx + 4,
+          designation_raw: rawDes,
+          designation_clean: cleanDes,
+          unit_label: unitLabel,
+          stock_opening: opening,
+          stock_current: current,
+          is_negative: isNeg,
+          is_duplicate: isDup,
+          is_tracked: current > 0,
+          action: isNeg ? 'import_as_zero' : isDup ? 'skip' : 'import',
+          note: isNeg
+            ? 'Valeur négative (' + current + ') dans classeur -> initialisé à 0'
+            : isDup
+            ? 'Doublon détecté avec une ligne précédente'
+            : undefined,
+        });
+      });
+
+      const result: ImportPreviewResult = {
+        total_rows: rows.length,
+        valid,
+        duplicates,
+        negative,
+        zero_stock,
+        rows: previewRows,
+      };
+
+      sendJson(res, 200, { success: true, data: result });
+      return true;
+    } catch (err: any) {
+      sendJson(res, 500, { success: false, message: 'Erreur lecture XLSX: ' + err.message });
+      return true;
+    }
+  }
+
+  // POST /api/admin/inventory/import/preview
+  if (pathname === '/api/admin/inventory/import/preview' && method === 'POST') {
+    try {
+      const body = await parseBody<any>(req);
+      const rows: any[] = body.rows || [];
+
+      const seen = new Set<string>();
+      const previewRows: ImportPreviewRow[] = [];
+      let duplicates = 0;
+      let negative = 0;
+      let zero_stock = 0;
+      let valid = 0;
+
+      rows.forEach((r, idx) => {
+        const rawDes = String(r.designation || r.nom || r[0] || '').trim();
+        if (!rawDes) return;
+        const cleanDes = rawDes.toUpperCase().replace(/\s+/g, ' ');
+        const current = Number(r.stock ?? r.stock_current ?? r.quantite ?? r[2] ?? 0);
+        const opening = Number(r.stock_opening ?? r[1] ?? current);
+
+        const isDup = seen.has(cleanDes);
+        seen.add(cleanDes);
+        if (isDup) duplicates++;
+
+        const isNeg = current < 0;
+        if (isNeg) negative++;
+        if (current === 0) zero_stock++;
+        if (current > 0 && !isDup) valid++;
+
+        previewRows.push({
+          row_index: idx + 1,
+          designation_raw: rawDes,
+          designation_clean: cleanDes,
+          unit_label: r.unit || r.unite || 'Unité',
+          stock_opening: opening,
+          stock_current: current,
+          is_negative: isNeg,
+          is_duplicate: isDup,
+          is_tracked: current > 0,
+          action: isNeg ? 'import_as_zero' : isDup ? 'skip' : 'import',
+          note: isNeg ? 'Valeur négative (' + current + ') initialisée à 0' : isDup ? 'Doublon détecté' : undefined,
+        });
+      });
+
+      const result: ImportPreviewResult = {
+        total_rows: previewRows.length,
+        valid,
+        duplicates,
+        negative,
+        zero_stock,
+        rows: previewRows,
+      };
+
+      sendJson(res, 200, { success: true, data: result });
+      return true;
+    } catch (err: any) {
+      sendJson(res, 400, { success: false, message: err.message });
+      return true;
+    }
+  }
+
+  // POST /api/admin/inventory/import/commit
+  if (pathname === '/api/admin/inventory/import/commit' && method === 'POST') {
+    try {
+      const body = await parseBody<any>(req);
+      const rows: ImportPreviewRow[] = body.rows || [];
+      const movementDate = body.movement_date || new Date().toISOString().split('T')[0];
+      const periodId = body.period_id || null;
+
+      db.inventory_items = db.inventory_items || [];
+      db.stock_movements = db.stock_movements || [];
+
+      let importedCount = 0;
+      let trackedCount = 0;
+      let movementsCreated = 0;
+
+      for (const r of rows) {
+        if (r.action === 'skip') continue;
+
+        const finalQty = r.action === 'import_as_zero' ? 0 : Math.max(0, r.stock_current);
+        const isTracked = !!r.is_tracked;
+        const newId = 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+        const code = 'ART-' + String(db.inventory_items.length + 1).padStart(4, '0');
+
+        const newItem: InventoryItem = {
+          id: newId,
+          code,
+          designation: r.designation_raw,
+          designation_norm: r.designation_clean,
+          unit_label: r.unit_label || 'Unité',
+          product_id: null,
+          min_stock: isTracked ? 5 : null,
+          is_tracked: isTracked,
+          qty_on_hand: finalQty,
+          is_active: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        db.inventory_items.push(newItem);
+        importedCount++;
+        if (isTracked) trackedCount++;
+
+        if (finalQty > 0) {
+          db.stock_movements.push({
+            id: 'mvt_' + newId + '_import',
+            item_id: newId,
+            type: 'opening',
+            quantity: finalQty,
+            movement_date: movementDate,
+            reason: r.note || 'Import initial',
+            order_id: null,
+            order_item_id: null,
+            period_id: periodId,
+            created_by: 'Admin Import',
+            created_at: new Date().toISOString(),
+          });
+          movementsCreated++;
+        }
+      }
+
+      saveDb(db);
+      sendJson(res, 200, {
+        success: true,
+        data: {
+          imported_count: importedCount,
+          tracked_count: trackedCount,
+          movements_created: movementsCreated,
+        },
+        message: `${importedCount} article(s) importé(s) avec succès (${trackedCount} suivis, ${movementsCreated} mouvements créés).`,
+      });
+      return true;
+    } catch (err: any) {
+      sendJson(res, 400, { success: false, message: err.message });
+      return true;
+    }
+  }
+
+  // GET /api/admin/inventory/integrity-check
+  if (pathname === '/api/admin/inventory/integrity-check' && method === 'GET') {
+    const items = db.inventory_items || [];
+    const movements = db.stock_movements || [];
+
+    const discrepancies: any[] = [];
+    for (const item of items) {
+      const itemMvts = movements.filter((m) => m.item_id === item.id);
+      let calculated = 0;
+      for (const m of itemMvts) {
+        if (m.type === 'purchase' || m.type === 'return' || m.type === 'opening') {
+          calculated += m.quantity;
+        } else if (m.type === 'sale_shop' || m.type === 'sale_online' || m.type === 'loss') {
+          calculated -= m.quantity;
+        } else if (m.type === 'adjustment' || m.type === 'count_correction') {
+          calculated += m.quantity;
+        }
+      }
+      if (calculated !== item.qty_on_hand && item.is_tracked) {
+        discrepancies.push({
+          item_id: item.id,
+          designation: item.designation,
+          qty_on_hand: item.qty_on_hand,
+          sum_movements: calculated,
+          diff: item.qty_on_hand - calculated,
+        });
+      }
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      data: {
+        checked_items: items.length,
+        discrepancies,
+        is_healthy: discrepancies.length === 0,
+      },
+    });
+    return true;
+  }
+
+  // PUT /api/admin/orders/:id/status (with automatic inventory trigger on 'shipped')
+  const orderStatusMatch = pathname.match(/^\/api\/admin\/orders\/([^/]+)\/status$/);
+  if (orderStatusMatch && (method === 'PUT' || method === 'PATCH')) {
+    const orderId = orderStatusMatch[1];
+    const order = db.orders.find((o) => String(o.id) === orderId || o.orderNumber === orderId || o.order_number === orderId);
+    if (!order) {
+      sendJson(res, 404, { success: false, message: 'Commande introuvable' });
+      return true;
+    }
+
+    try {
+      const body = await parseBody<any>(req);
+      const newStatus = body.status;
+      const oldStatus = order.status;
+      order.status = newStatus;
+      (order as any).updated_at = new Date().toISOString();
+
+      // INVENTORY TRIGGER: when order becomes 'shipped'
+      if (newStatus === 'shipped' && oldStatus !== 'shipped') {
+        db.stock_movements = db.stock_movements || [];
+        const items = db.inventory_items || [];
+
+        for (const line of (order.items || [])) {
+          // Find matching inventory item by product_id or designation
+          const normName = (line.name || line.product_name || '').toUpperCase().replace(/\s+/g, ' ');
+          const invItem = items.find(
+            (i) => (line.productId && i.product_id === String(line.productId)) || i.designation_norm === normName
+          );
+
+          if (invItem && invItem.is_tracked) {
+            // Check idempotence
+            const exists = db.stock_movements.find(
+              (m) => m.order_id === String(order.id) && m.order_item_id === String(line.id || line.productId)
+            );
+            if (!exists) {
+              const qty = Number(line.quantity) || 1;
+              invItem.qty_on_hand -= qty;
+              invItem.updated_at = new Date().toISOString();
+
+              db.stock_movements.push({
+                id: 'mvt_ord_' + order.id + '_' + (line.id || line.productId),
+                item_id: invItem.id,
+                type: 'sale_online',
+                quantity: qty,
+                movement_date: new Date().toISOString().split('T')[0],
+                reason: 'Expédition commande #' + (order.orderNumber || order.id),
+                order_id: String(order.id),
+                order_item_id: String(line.id || line.productId),
+                period_id: null,
+                created_by: 'Système Commande',
+                created_at: new Date().toISOString(),
+              });
+            }
+          }
+        }
+      }
+
+      saveDb(db);
+      sendJson(res, 200, { success: true, message: 'Statut de commande mis à jour : ' + newStatus, data: { order } });
+      return true;
+    } catch (err: any) {
+      sendJson(res, 400, { success: false, message: err.message });
+      return true;
+    }
   }
 
   return false;

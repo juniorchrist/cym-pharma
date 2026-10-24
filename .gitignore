@@ -8,16 +8,34 @@ dist/
 build/
 out/
 
-# Environment files
+# Environment files — NE JAMAIS VERSIONNER LES VRAIS SECRETS
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
 !.env.example
 
+# Fichiers Excel internes, stocks et classeurs confidentiels
+Classeur1.xlsx
+*.xlsx
+*.xls
+*.csv
+
+# Données JSON runtime et sauvegardes contenant des informations privées
+data/
+data/*.json
+data/cym_database.json
+data/relances_outbox.json
+src/data/*.mock.*
+
+# Backend PHP — config avec vrais secrets (ne pas versionner)
+api/config/env.php
+!api/config/env.example.php
+
+# Upload utilisateurs
+uploads/
+
 # Logs
-logs
+api/logs/*.log
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -52,3 +70,7 @@ Thumbs.db
 .trae-cn/
 .tempmediaStorage/
 .user_uploaded/
+
+# Code mort — Node.js backend non déployé
+backend/
+server.js

@@ -1,16 +1,28 @@
 /**
- * Configuration de l'URL de base de l'API.
- * L'application ne requiert aucune variable d'environnement pour fonctionner.
- * L'URL par défaut pointe vers le backend PHP local (http://localhost/bon/api).
- * Elle peut être surchargée sans toucher au code via localStorage['cym_api_url'].
+ * src/config/api.ts
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Configuration de l'URL de base de l'API backend PHP.
+ *
+ * Priorité (la première valeur non-vide gagne) :
+ *  1. Variable d'environnement Vite : VITE_API_URL  (build-time)
+ *  2. Override runtime via localStorage['cym_api_url']  (admin seulement)
+ *  3. Fallback : http://localhost/bon/api  (développement local XAMPP)
+ *
+ * Pour changer d'environnement, créez un fichier `.env.local` ou
+ * `.env.production` avec VITE_API_URL= ... (voir .env.example).
+ * Ne codez JAMAIS une URL en dur dans le code source.
  */
 
-export const API_BASE_URL = 'http://localhost/bon/api';
+const ENV_API_URL = import.meta.env.VITE_API_URL as string | undefined;
+
+export const API_BASE_URL: string =
+  ENV_API_URL?.trim() || 'http://localhost/bon/api';
 
 /**
  * Résout dynamiquement l'URL de l'API à chaque requête :
- * 1. Vérifie si une URL personnalisée est définie dans localStorage['cym_api_url']
- * 2. Retourne sinon l'URL par défaut API_BASE_URL
+ *  1. Vérifie d'abord VITE_API_URL (injecté au moment du build).
+ *  2. Vérifie si un override admin est défini dans localStorage['cym_api_url'].
+ *  3. Retourne sinon API_BASE_URL.
  */
 export function getApiBaseUrl(): string {
   try {
@@ -21,7 +33,7 @@ export function getApiBaseUrl(): string {
       }
     }
   } catch {
-    // Évite tout blocage en cas d'accès restreint au localStorage
+    // Accès localStorage bloqué (mode privé strict, etc.)
   }
   return API_BASE_URL;
 }

@@ -1,4 +1,4 @@
-import { Product } from '../types';
+import { Product } from '../types/index.ts';
 
 export interface CategoryData {
   slug: string;

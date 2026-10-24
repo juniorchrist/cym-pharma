@@ -36,6 +36,7 @@ export const Dashboard: React.FC = () => {
   const { showToast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
+  const navigate = useNavigate();
 
   const [activePanel, setActivePanel] = useState<PanelKey>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -82,68 +83,18 @@ export const Dashboard: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('all');
 
   // Profile Form state
-  const [profOrg, setProfOrg] = useState(user?.establishment_name || user?.org || 'Clinique Sainte-Marie');
+  const [profOrg, setProfOrg] = useState(user?.establishment_name || user?.org || '');
   const [profName, setProfName] = useState(
-    user?.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : user?.name || 'Dr. Marie Konan'
+    user?.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : user?.name || ''
   );
-  const [profEmail, setProfEmail] = useState(user?.email || 'marie.konan@clinique-abidjan.ci');
-  const [profPhone, setProfPhone] = useState(user?.phone || '+225 07 12 34 56 78');
+  const [profEmail, setProfEmail] = useState(user?.email || '');
+  const [profPhone, setProfPhone] = useState(user?.phone || '');
 
   // Urgent alert input
   const [urgentInput, setUrgentInput] = useState('');
 
-  // Sample order history
-  const [orders, setOrders] = useState<Order[]>([
-    {
-      id: 'CMD-2026-8842',
-      orderNumber: 'CMD-2026-8842',
-      created_at: new Date().toISOString(),
-      status: 'Facture disponible',
-      invoice_number: 'FAC-2026-8842',
-      invoice_date: new Date().toLocaleDateString('fr-FR'),
-      total: 125000,
-      subtotal: 125000,
-      establishment_name: profOrg,
-      shipping_city: 'Abidjan, Cocody',
-      item_count: 3,
-      items: [
-        { name: 'Gants d’examen Nitrile (Boîte 100)', quantity: 2, reference: 'GNT-NIT-100', unit_price: 25000, line_total: 50000 },
-        { name: 'Compresses Stériles 40x40 (Paquet 50)', quantity: 1, reference: 'CMP-ST-40', unit_price: 75000, line_total: 75000 },
-      ],
-    },
-    {
-      id: 'CMD-2026-7210',
-      orderNumber: 'CMD-2026-7210',
-      created_at: '2026-09-22T10:00:00Z',
-      status: 'Facture disponible',
-      invoice_number: 'FAC-2026-7210',
-      invoice_date: '22/09/2026',
-      total: 45000,
-      subtotal: 45000,
-      establishment_name: profOrg,
-      shipping_city: 'Abidjan, Cocody',
-      item_count: 1,
-      items: [
-        { name: 'Masques chirurgicaux Type IIR (Boîte 50)', quantity: 3, reference: 'MSK-IIR-50', unit_price: 15000, line_total: 45000 },
-      ],
-    },
-    {
-      id: 'CMD-2026-5904',
-      orderNumber: 'CMD-2026-5904',
-      created_at: '2026-09-10T14:30:00Z',
-      status: 'Facture disponible',
-      invoice_number: 'FAC-2026-5904',
-      invoice_date: '10/09/2026',
-      total: 80000,
-      subtotal: 80000,
-      establishment_name: profOrg,
-      shipping_city: 'Abidjan, Cocody',
-      item_count: 6,
-      items: [
-        { name: 'Seringues 5 mL avec aiguille (Pack 50)', quantity: 4, reference: 'SER-5ML-P50', unit_price: 20000, line_total: 80000 },
-      ],
-    },
-  ]);
+  // Historique de commandes (vide par défaut — chargé depuis l'API)
+  const [orders, setOrders] = useState<Order[]>([]);
 
   const totalInvoiced = orders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
   const invoicedCount = orders.filter((o) => (Number(o.total) || 0) > 0 || o.invoice_number || o.status === 'Facture disponible').length;
@@ -241,8 +192,8 @@ export const Dashboard: React.FC = () => {
     return o.status === statusFilter;
   });
 
-  const displayOrg = profOrg || 'Clinique Sainte-Marie';
-  const displayName = profName || 'Dr. Marie Konan';
+  const displayOrg = profOrg || '';
+  const displayName = profName || '';
   const initials = displayOrg.slice(0, 2).toUpperCase();
 
   return (

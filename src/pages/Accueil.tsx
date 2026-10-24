@@ -73,7 +73,7 @@ export const Accueil: React.FC = () => {
 
             <div className="relative rounded-2xl overflow-hidden card h-64 sm:h-80 lg:h-[26rem]">
               <img
-                src="/assets/images/Kit médical bleu et blanc.png"
+                src="/assets/images/Matériel médical sur table clinique.png"
                 alt="Équipements médicaux CYM Pharma"
                 className="w-full h-full object-cover"
                 onError={(e) => {

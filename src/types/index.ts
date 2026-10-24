@@ -73,8 +73,12 @@ export interface Product {
   cert_ce?: number | boolean;
   cert_iso13485?: number | boolean;
   featured?: number | boolean;
+  is_published?: boolean;
+  inventory_item_id?: string | null;
   currency?: string;
 }
+
+export * from './inventaire';
 
 export interface Category {
   id: string;
@@ -186,10 +190,14 @@ export interface RegisterPayload {
   client?: string;
   responsable?: string;
   firstName?: string;
+  first_name?: string;
   lastName?: string;
+  last_name?: string;
   establishmentName?: string;
+  establishment_name?: string;
   establishment?: string;
   establishmentType?: string;
+  establishment_type?: string;
   email: string;
   phone: string;
   password: string;
@@ -202,13 +210,28 @@ export interface RegisterPayload {
   };
 }
 
-export interface CreateOrderPayload {
-  items: { productId: number; quantity: number }[];
-  shipping: { method: string };
-  payment: { method: string };
-  shippingAddress: {
-    street: string;
-    city: 'Abidjan';
-    notes: string;
-  };
+export interface CreateOrderItemPayload {
+  productId?: number | string;
+  name?: string;
+  reference?: string;
+  unit?: string;
+  conditionnement?: string;
+  quantity: number;
 }
+
+export interface CreateOrderPayload {
+  items: CreateOrderItemPayload[];
+  establishment_name?: string;
+  shipping?: { method: string };
+  payment?: { method: string };
+  shippingAddress?: {
+    street?: string;
+    city?: string;
+    notes?: string;
+  };
+  shipping_address?: string;
+  shipping_city?: string;
+  shipping_notes?: string;
+  notes?: string;
+}
+

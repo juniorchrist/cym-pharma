@@ -5,113 +5,17 @@ import { storage } from '../utils/storage';
 import { Orders } from '../services/api';
 import { Order, OrderItem } from '../types';
 
-// Sample 32-item catalog data for instant verification of long orders on single A4
-const GENERATE_SAMPLE_32_ITEMS = (): OrderItem[] => {
-  const sampleNames = [
-    { name: 'FIL NYLON (Fil à peau) N°0 B/12', ref: 'NYL-0', price: 6500, unit: 'B/12' },
-    { name: 'FIL RESORBABLE VICRYL N°2/0 B/12', ref: 'VIC-20', price: 9800, unit: 'B/12' },
-    { name: 'INTRANULE (Catheter) G20-Rose B/100', ref: 'CAT-G20', price: 14500, unit: 'B/100' },
-    { name: 'INTRANULE (Catheter) G22-Bleu B/100', ref: 'CAT-G22', price: 14500, unit: 'B/100' },
-    { name: 'SONDE ALIMENTAIRE BOUT FERME CH10', ref: 'SND-AL-10', price: 1200, unit: 'Unité' },
-    { name: 'SONDE D\'ASPIRATION CH14', ref: 'SND-ASP-14', price: 1100, unit: 'Unité' },
-    { name: 'SONDE DE FOLEY DUFOUR 3 VOIES CH20', ref: 'SND-FOL-20', price: 4500, unit: 'Unité' },
-    { name: 'SONDE DE FOLEY MIXTE CH18 P/10', ref: 'SND-FOL-18', price: 8500, unit: 'P/10' },
-    { name: 'SONDE NASOGASTRIQUE CH16', ref: 'SND-NG-16', price: 1800, unit: 'Unité' },
-    { name: 'SONDE RECTALE CH16', ref: 'SND-REC-16', price: 1400, unit: 'Unité' },
-    { name: 'TROCARD G21 P/100', ref: 'TRC-G21', price: 12500, unit: 'P/100' },
-    { name: 'LUNETTE A OXYGENE ADULTE', ref: 'LUN-OXY-AD', price: 1600, unit: 'Unité' },
-    { name: 'LUNETTE A OXYGENE PEDIATRIQUE', ref: 'LUN-OXY-PED', price: 1600, unit: 'Unité' },
-    { name: 'EPICRANIENNE 21G B/100', ref: 'EPI-21G', price: 11500, unit: 'B/100' },
-    { name: 'EPICRANIENNE 23G B/100', ref: 'EPI-23G', price: 11500, unit: 'B/100' },
-    { name: 'DRAIN DE REDON CH12', ref: 'DRN-RED-12', price: 2900, unit: 'Unité' },
-    { name: 'CEINTURE LOMBAIRE Taille L', ref: 'CNT-LOM-L', price: 18500, unit: 'Unité' },
-    { name: 'CEINTURE LOMBAIRE Taille XL', ref: 'CNT-LOM-XL', price: 18500, unit: 'Unité' },
-    { name: 'AIGUILLE A PONCTION LOMBAIRE G20', ref: 'AIG-PL-20', price: 3200, unit: 'Unité' },
-    { name: 'AIGUILLE A AILETTES G21 B/100', ref: 'AIG-AIL-21', price: 13500, unit: 'B/100' },
-    { name: 'AIGUILLE VACUTAINER 21G B/100', ref: 'VAC-21G', price: 9500, unit: 'B/100' },
-    { name: 'CANULE DE GUEDEL N°3 (Vert)', ref: 'GDL-N3', price: 1200, unit: 'Unité' },
-    { name: 'COMPRESSES STERILES 40x40 P/50', ref: 'CMP-ST-40', price: 8500, unit: 'B/50' },
-    { name: 'BANDE PLATREE 15cm x 3m', ref: 'BND-PLT-15', price: 2200, unit: 'Rouleau' },
-    { name: 'BANDE VELPEAU 10cm x 4m', ref: 'BND-VEL-10', price: 850, unit: 'Rouleau' },
-    { name: 'SPARADRAP MICROPORE 5cm x 9m', ref: 'SPR-MIC-5', price: 2400, unit: 'Rouleau' },
-    { name: 'SERINGUE 3 CORPS 5mL B/100', ref: 'SER-5ML', price: 6500, unit: 'B/100' },
-    { name: 'SERINGUE 3 CORPS 10mL B/100', ref: 'SER-10ML', price: 8500, unit: 'B/100' },
-    { name: 'POCHE A URINE 2L AVEC VALVE', ref: 'PCH-URN-2L', price: 1500, unit: 'Unité' },
-    { name: 'TUBE DE PRELEVEMENT EDTA 4mL B/100', ref: 'TB-EDTA-4', price: 9200, unit: 'B/100' },
-    { name: 'TUBE DE PRELEVEMENT SEC 5mL B/100', ref: 'TB-SEC-5', price: 9200, unit: 'B/100' },
-    { name: 'ALCOOL ETHYLIQUE 90° 1L', ref: 'ALC-90-1L', price: 5750, unit: 'Flacon' },
-  ];
-
-  return sampleNames.map((s, idx) => ({
-    productId: `prod-sample-${idx + 1}`,
-    name: s.name,
-    product_name: s.name,
-    reference: s.ref,
-    product_ref: s.ref,
-    quantity: (idx % 3) + 1,
-    qty: (idx % 3) + 1,
-    unit: s.unit,
-    conditionnement: s.unit,
-    unit_price: s.price,
-    line_total: s.price * ((idx % 3) + 1),
-  }));
-};
-
 export const Facture: React.FC = () => {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const orderId = searchParams.get('id') || searchParams.get('order_id');
-  const force32Mode = searchParams.get('mock') === '32' || searchParams.get('items') === '32';
 
-  const [simulatedCount, setSimulatedCount] = useState<number>(force32Mode ? 32 : 0);
-
-  const [order, setOrder] = useState<Order>(() => {
+  const [order, setOrder] = useState<Order | null>(() => {
     const cached = storage.getBLCurrentOrder();
     if (cached && (cached.id === orderId || cached.orderNumber === orderId)) {
       return cached;
     }
-    return {
-      id: orderId || 'CMD-2026-8842',
-      orderNumber: orderId || 'CMD-2026-8842',
-      created_at: new Date().toISOString(),
-      establishment_name: 'Clinique Sainte-Marie',
-      shipping_address: 'Cocody Danga, Rue des Jardins',
-      shipping_city: 'Abidjan, Côte d’Ivoire',
-      status: 'Facture disponible',
-      total: 45000,
-      subtotal: 45000,
-      invoice_number: `FAC-${String(orderId || '8842').replace('CMD-', '')}`,
-      invoice_date: new Date().toISOString(),
-      items: [
-        {
-          name: 'Gants d’examen Nitrile non poudrés (Boîte 100)',
-          reference: 'GNT-NIT-100',
-          quantity: 2,
-          unit: 'Boîte',
-          conditionnement: 'Boîte de 100',
-          unit_price: 12500,
-          line_total: 25000,
-        },
-        {
-          name: 'Compresses Stériles de gaze 40x40 (Paquet 50)',
-          reference: 'CMP-ST-40',
-          quantity: 1,
-          unit: 'Boîte',
-          conditionnement: 'Boîte de 50',
-          unit_price: 8500,
-          line_total: 8500,
-        },
-        {
-          name: 'Alcool éthylique rectifié 90° 1L',
-          reference: 'CMD-ALC-01',
-          quantity: 2,
-          unit: 'Flacon',
-          conditionnement: 'Flacon de 1L',
-          unit_price: 5750,
-          line_total: 11500,
-        },
-      ],
-    };
+    return null;
   });
 
   const [loading, setLoading] = useState(false);
@@ -140,17 +44,14 @@ export const Facture: React.FC = () => {
   }, [orderId]);
 
   const rawItems = useMemo(() => {
-    if (simulatedCount === 32 || force32Mode) {
-      return GENERATE_SAMPLE_32_ITEMS();
-    }
-    return order.items && order.items.length > 0 ? order.items : [];
-  }, [order.items, simulatedCount, force32Mode]);
+    return order?.items && order.items.length > 0 ? order.items : [];
+  }, [order?.items]);
 
-  const orderNumber = order.orderNumber || order.order_number || String(order.id);
-  const invoiceNumber = order.invoice_number || `FAC-${orderNumber.replace('CMD-', '')}`;
+  const orderNumber = order?.orderNumber || order?.order_number || String(order?.id || '');
+  const invoiceNumber = order?.invoice_number || (orderNumber ? `FAC-${orderNumber.replace('CMD-', '')}` : '');
 
   const formattedDate = (() => {
-    const d = order.invoice_date || order.priced_at || order.created_at;
+    const d = order?.invoice_date || order?.priced_at || order?.created_at;
     if (d) {
       const dateObj = new Date(d);
       if (!isNaN(dateObj.getTime())) {
@@ -165,21 +66,18 @@ export const Facture: React.FC = () => {
   })();
 
   const clientName =
-    order.establishment_name ||
-    (order.first_name && order.last_name ? `${order.first_name} ${order.last_name}` : 'Établissement Client');
+    order?.establishment_name ||
+    (order?.first_name && order?.last_name ? `${order.first_name} ${order.last_name}` : '');
 
   const fullAddress =
-    [order.shipping_address, order.shipping_city].filter(Boolean).join(', ') || 'Abidjan, Côte d’Ivoire';
+    [order?.shipping_address, order?.shipping_city].filter(Boolean).join(', ') || '';
 
   const computedTotal = useMemo(() => {
-    if (simulatedCount === 32 || force32Mode) {
-      return rawItems.reduce((acc, it) => acc + (it.line_total || ((it.unit_price || 0) * (it.quantity || 1))), 0);
-    }
-    if (typeof order.total === 'number' && order.total > 0) {
+    if (typeof order?.total === 'number' && order.total > 0) {
       return order.total;
     }
     return rawItems.reduce((sum, it) => sum + (it.line_total || ((it.unit_price || it.unitPrice || 0) * (it.quantity || 1))), 0);
-  }, [order.total, rawItems, simulatedCount, force32Mode]);
+  }, [order?.total, rawItems]);
 
   const handlePrint = () => {
     window.print();
@@ -192,7 +90,42 @@ export const Facture: React.FC = () => {
   const leftColumnItems = isLongList ? rawItems.slice(0, midPoint) : rawItems;
   const rightColumnItems = isLongList ? rawItems.slice(midPoint) : [];
 
+  if (loading) {
+    return (
+      <div className="bg-[#f1f5f9] min-h-screen flex items-center justify-center py-6 px-4 text-slate-600">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-center max-w-sm flex flex-col items-center gap-3">
+          <div className="animate-spin rounded-full h-8 w-8 border-2 border-emerald-600 border-t-transparent" />
+          <p className="text-sm font-semibold text-slate-700">Chargement de la facture…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Écran d'état vide si la commande n'est pas trouvée
+  if (!order) {
+    return (
+      <div className="bg-[#f1f5f9] min-h-screen flex flex-col items-center justify-center py-6 px-4 text-slate-600">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-10 text-center max-w-md">
+          <p className="text-lg font-semibold text-slate-700 mb-2">Facture introuvable</p>
+          <p className="text-sm text-slate-500 mb-6">
+            {orderId
+              ? `La commande ${orderId} est introuvable ou la facture n'est pas encore disponible.`
+              : 'Aucun identifiant de commande fourni.'}
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate('/dashboard#factures')}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0e9f6e] text-white text-sm font-semibold hover:bg-[#057a55] transition"
+          >
+            Retour au tableau de bord
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
+
     <div className="bg-[#f1f5f9] min-h-screen flex flex-col items-center py-6 px-4 print:p-0 print:bg-white text-slate-800">
       {/* ── BARRE D'ACTIONS SUPÉRIEURE (invisible à l'impression) ── */}
       <header className="w-full max-w-[850px] flex flex-wrap items-center justify-between gap-3 mb-5 p-3.5 bg-white rounded-2xl border border-slate-200 shadow-xs print:hidden">
@@ -209,31 +142,6 @@ export const Facture: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Test toggle button to verify > 30 items on single page */}
-          <button
-            type="button"
-            onClick={() => {
-              if (simulatedCount === 32) {
-                setSimulatedCount(0);
-                searchParams.delete('mock');
-                setSearchParams(searchParams);
-              } else {
-                setSimulatedCount(32);
-                searchParams.set('mock', '32');
-                setSearchParams(searchParams);
-              }
-            }}
-            className={`inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded-lg border transition cursor-pointer ${
-              simulatedCount === 32
-                ? 'bg-blue-600 text-white border-blue-600'
-                : 'bg-white text-blue-700 border-blue-200 hover:bg-blue-50'
-            }`}
-            title="Tester l'affichage compact 2 colonnes pour > 30 articles"
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span>{simulatedCount === 32 ? 'Mode normal' : 'Simuler > 30 articles'}</span>
-          </button>
-
           <button
             type="button"
             onClick={handlePrint}
@@ -312,7 +220,7 @@ export const Facture: React.FC = () => {
               <p className="text-[10.5px] text-slate-600 mt-0.5">
                 {fullAddress}
               </p>
-              {order.shipping_notes && (
+              {order?.shipping_notes && (
                 <p className="text-[9.5px] text-slate-500 italic mt-0.5 truncate">
                   Note : {order.shipping_notes}
                 </p>
@@ -327,7 +235,7 @@ export const Facture: React.FC = () => {
               <div className="flex justify-between">
                 <span className="text-slate-500">Date commande :</span>
                 <span className="font-medium text-slate-800">
-                  {order.created_at ? new Date(order.created_at).toLocaleDateString('fr-FR') : formattedDate}
+                  {order?.created_at ? new Date(order.created_at).toLocaleDateString('fr-FR') : formattedDate}
                 </span>
               </div>
               <div className="flex justify-between">

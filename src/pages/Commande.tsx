@@ -27,7 +27,7 @@ export const Commande: React.FC = () => {
   const { showToast } = useToast();
 
   const [establishmentName, setEstablishmentName] = useState(
-    user?.establishment_name || user?.org || 'Clinique Sainte-Marie'
+    user?.establishment_name || user?.org || ''
   );
   const [deliveryAddress, setDeliveryAddress] = useState(
     user?.commune ? `Abidjan, ${user.commune}` : 'Abidjan, Cocody'
@@ -69,22 +69,24 @@ export const Commande: React.FC = () => {
     };
 
     try {
-      let orderNumber = `CMD-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
       const res = await Orders.create(payload as any);
 
-      if (res.success && res.data?.order) {
-        orderNumber = res.data.order.orderNumber || res.data.order.order_number || orderNumber;
+      if (!res.success || !res.data?.order) {
+        showToast(res.message || 'Impossible d\'enregistrer la commande. Veuillez vérifier la connexion au serveur.', 'error');
+        return;
       }
 
+      const createdOrder = res.data.order;
+      const orderNumber = createdOrder.orderNumber || createdOrder.order_number || String(createdOrder.id);
       setConfirmedOrderNumber(orderNumber);
 
-      // Save order in session for printable Bon de Livraison
+      // Enregistrer la vraie commande validée en session pour l'impression immédiate du Bon de Livraison
       storage.setBLCurrentOrder({
         id: orderNumber,
         order_number: orderNumber,
         orderNumber,
-        created_at: new Date().toISOString(),
-        status: 'À chiffrer',
+        created_at: createdOrder.created_at || new Date().toISOString(),
+        status: createdOrder.status || 'À chiffrer',
         establishment_name: establishmentName.trim(),
         shipping_address: deliveryAddress.trim(),
         shipping_city: 'Abidjan',
@@ -106,12 +108,9 @@ export const Commande: React.FC = () => {
       setIsSubmitted(true);
       showToast(`Commande envoyée avec succès (Statut : À chiffrer) → ${orderNumber}`, 'success');
       window.scrollTo({ top: 100, behavior: 'smooth' });
-    } catch (err) {
-      console.warn('Order submission fallback', err);
-      const fallbackNum = `CMD-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
-      setConfirmedOrderNumber(fallbackNum);
-      clear();
-      setIsSubmitted(true);
+    } catch (err: any) {
+      console.error('[Commande] Erreur lors de la transmission :', err);
+      showToast(err?.message || 'Erreur technique lors de la transmission de la commande.', 'error');
     } finally {
       setLoading(false);
     }

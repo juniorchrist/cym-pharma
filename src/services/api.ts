@@ -1,3 +1,16 @@
+/**
+ * src/services/api.ts
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Couche de services API pour CYM Pharma.
+ *
+ * Architecture :
+ *  1. Supabase (source de vérité principale quand VITE_SUPABASE_URL et
+ *     VITE_SUPABASE_PUBLISHABLE_KEY sont configurés).
+ *  2. Backend HTTP configurable via VITE_API_URL (InfinityFree / o2switch).
+ *  3. AUCUNE donnée fictive ni fallback mocké en cas de panne. En cas d'erreur réseau,
+ *     une erreur explicite est renvoyée pour afficher un état d'erreur ou vide clair.
+ */
+
 import {
   ApiResponse,
   CreateOrderPayload,
@@ -11,11 +24,11 @@ import {
 } from '../types';
 import { storage } from '../utils/storage';
 import { API_BASE_URL, getApiBaseUrl } from '../config/api';
-import { getMockResponse, setDemoMode } from '../mocks';
+import { supabase, isSupabaseConfigured } from './supabase';
 
 export { API_BASE_URL };
 
-// Helper pour requêtes HTTP
+// Helper pour requêtes HTTP vers le backend
 async function request<T = unknown>(
   endpoint: string,
   options: RequestInit = {}
@@ -47,34 +60,80 @@ async function request<T = unknown>(
       storage.removeUser();
       return {
         success: false,
-        message: 'Session expirée',
+        message: 'Session expirée. Veuillez vous reconnecter.',
       };
     }
 
     if (!response.ok) {
-      throw new Error(`HTTP error ${response.status}`);
+      const errJson = await response.json().catch(() => ({}));
+      return {
+        success: false,
+        message: errJson.message || `Erreur serveur (HTTP ${response.status})`,
+      };
     }
 
     const data = (await response.json()) as ApiResponse<T>;
-    setDemoMode(false);
     return data;
   } catch (error) {
-    console.warn(`API call failed to ${url}:`, error);
-    setDemoMode(true);
-    const mock = getMockResponse<T>(endpoint, options);
-    if (mock) {
-      return mock;
-    }
+    console.warn(`[CYM API] Échec de la requête vers ${url}:`, error);
     return {
       success: false,
-      message: 'Impossible de contacter le serveur',
+      message: 'Impossible de contacter le serveur CYM Pharma. Veuillez vérifier votre connexion.',
     };
   }
 }
 
-// ── Auth ──
+// ── Authentification ──
 export const Auth = {
   async login(email: string, password: string): Promise<ApiResponse<{ token: string; user: User }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+
+        if (authError || !authData.user || !authData.session) {
+          return {
+            success: false,
+            message: authError?.message || 'Identifiants de connexion incorrects',
+          };
+        }
+
+        const token = authData.session.access_token;
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', authData.user.id)
+          .maybeSingle();
+
+        const user: User = {
+          id: authData.user.id,
+          email: authData.user.email || email,
+          name: profile?.name || authData.user.user_metadata?.name || '',
+          first_name: profile?.first_name,
+          last_name: profile?.last_name,
+          role: profile?.role || (authData.user.user_metadata?.role as 'admin' | 'client') || 'client',
+          establishment_name: profile?.establishment_name,
+          phone: profile?.phone,
+          status: profile?.status || 'active',
+        };
+
+        storage.setAuthToken(token);
+        storage.setUser(user);
+        if (user.role === 'admin') {
+          storage.setAdminAccess(true);
+        }
+
+        return { success: true, data: { token, user } };
+      } catch (err: any) {
+        return {
+          success: false,
+          message: err?.message || 'Erreur lors de la connexion à Supabase',
+        };
+      }
+    }
+
     const res = await request<{ token: string; user: User }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
@@ -84,67 +143,61 @@ export const Auth = {
       storage.setAuthToken(res.data.token);
       if (res.data.user) {
         storage.setUser(res.data.user);
+        if (res.data.user.role === 'admin') {
+          storage.setAdminAccess(true);
+        }
       }
-      return res;
-    }
-
-    // Fallback auth locale offline
-    const localUsers = storage.getLocalUsers();
-    const found = localUsers.find((u) => u.email.toLowerCase() === email.toLowerCase().trim());
-    if (found && found._pwd === password) {
-      const { _pwd: _, ...userData } = found;
-      const fakeToken = 'local_' + userData.id + '_' + Date.now();
-      storage.setAuthToken(fakeToken);
-      storage.setUser(userData);
-      return {
-        success: true,
-        data: { token: fakeToken, user: userData },
-        user: userData,
-        token: fakeToken,
-      };
-    }
-
-    // Default sample accounts
-    if (email === 'admin@cympharma.ci' && (password === 'admin2026' || password === 'admin')) {
-      const adminUser: User = {
-        id: 'usr_admin',
-        email: 'admin@cympharma.ci',
-        name: 'Administrateur Central',
-        role: 'admin',
-        org: 'CYM Pharma Siège Abidjan',
-        status: 'active',
-      };
-      const fakeToken = 'admin_jwt_' + Date.now();
-      storage.setAuthToken(fakeToken);
-      storage.setUser(adminUser);
-      storage.setAdminAccess(true);
-      return { success: true, data: { token: fakeToken, user: adminUser }, user: adminUser };
-    }
-
-    if (email.includes('pharmacie') || email.includes('clinique') || email.includes('irys')) {
-      const clientUser: User = {
-        id: 'usr_sample',
-        email,
-        name: 'Dr. Marie Konan',
-        first_name: 'Dr. Marie',
-        last_name: 'Konan',
-        role: 'client',
-        org: 'Clinique Sainte-Marie',
-        establishment_name: 'Clinique Sainte-Marie',
-        phone: '+225 07 12 34 56 78',
-        commune: 'Cocody',
-        status: 'active',
-      };
-      const fakeToken = 'client_jwt_' + Date.now();
-      storage.setAuthToken(fakeToken);
-      storage.setUser(clientUser);
-      return { success: true, data: { token: fakeToken, user: clientUser }, user: clientUser };
     }
 
     return res;
   },
 
   async register(payload: RegisterPayload): Promise<ApiResponse<{ token?: string; user?: User }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email: payload.email.trim(),
+          password: payload.password,
+          options: {
+            data: {
+              name: payload.name || `${payload.first_name || ''} ${payload.last_name || ''}`.trim(),
+              role: 'client',
+              establishment_name: payload.establishment_name,
+              phone: payload.phone,
+            },
+          },
+        });
+
+        if (authError || !authData.user) {
+          return {
+            success: false,
+            message: authError?.message || 'Erreur lors de la création du compte',
+          };
+        }
+
+        const token = authData.session?.access_token || '';
+        const user: User = {
+          id: authData.user.id,
+          email: authData.user.email || payload.email,
+          name: payload.name || `${payload.first_name || ''} ${payload.last_name || ''}`.trim(),
+          role: 'client',
+          establishment_name: payload.establishment_name,
+          phone: payload.phone,
+          status: 'pending',
+        };
+
+        if (token) storage.setAuthToken(token);
+        storage.setUser(user);
+
+        return { success: true, data: { token, user } };
+      } catch (err: any) {
+        return {
+          success: false,
+          message: err?.message || 'Erreur lors de l\'enregistrement',
+        };
+      }
+    }
+
     const res = await request<{ token?: string; user?: User }>('/auth/register', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -153,62 +206,88 @@ export const Auth = {
     if (res.success && res.data) {
       if (res.data.token) storage.setAuthToken(res.data.token);
       if (res.data.user) storage.setUser(res.data.user);
-      return res;
     }
 
-    // Fallback inscription locale
-    const localUsers = storage.getLocalUsers();
-    const existing = localUsers.find((u) => u.email.toLowerCase() === payload.email.toLowerCase());
-    if (existing) {
-      return { success: false, message: 'Un compte avec cet email existe déjà.' };
-    }
-
-    const userId = 'u_' + Date.now();
-    const fullName = payload.responsable || payload.client || payload.name || 'Client';
-    const newUser: User = {
-      id: userId,
-      email: payload.email.toLowerCase(),
-      name: fullName,
-      first_name: payload.firstName || fullName.split(' ')[0],
-      last_name: payload.lastName || fullName.split(' ').slice(1).join(' '),
-      role: 'client',
-      phone: payload.phone,
-      org: payload.client || payload.establishmentName,
-      establishment_name: payload.client || payload.establishmentName,
-      commune: payload.commune || 'Abidjan',
-      status: 'active',
-      created_at: new Date().toISOString(),
-    };
-
-    localUsers.push({ ...newUser, _pwd: payload.password });
-    storage.setLocalUsers(localUsers);
-
-    const fakeToken = 'local_' + userId + '_' + Date.now();
-    storage.setAuthToken(fakeToken);
-    storage.setUser(newUser);
-
-    return {
-      success: true,
-      data: { token: fakeToken, user: newUser },
-      user: newUser,
-      token: fakeToken,
-    };
+    return res;
   },
 };
 
-// ── Products ──
+// ── Produits (Catalogue public sans prix ni stock privé) ──
 export const Products = {
   async list(params: Record<string, string | number> = {}): Promise<ApiResponse<{ products: Product[]; pagination: { total: number } }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        let query = supabase.from('products').select('*', { count: 'exact' }).eq('is_active', true).eq('is_published', true);
+
+        if (params.category) {
+          query = query.ilike('category', `%${params.category}%`);
+        }
+        if (params.search) {
+          query = query.or(`name.ilike.%${params.search}%,reference.ilike.%${params.search}%`);
+        }
+
+        const { data, error, count } = await query;
+        if (error) {
+          return { success: false, message: error.message };
+        }
+
+        // Nettoyer les prix pour l'espace public (règle de confidentialité CYM Pharma)
+        const sanitizedProducts = (data || []).map((p: any) => ({
+          ...p,
+          ref_price: 0,
+          price: 0,
+          stock: undefined,
+          qty_on_hand: undefined,
+        })) as Product[];
+
+        return {
+          success: true,
+          data: {
+            products: sanitizedProducts,
+            pagination: { total: count ?? sanitizedProducts.length },
+          },
+        };
+      } catch (err: any) {
+        return { success: false, message: err?.message || 'Erreur de chargement du catalogue' };
+      }
+    }
+
     const query = new URLSearchParams(params as Record<string, string>).toString();
-    const res = await request<{ products: Product[]; pagination: { total: number } }>(`/products${query ? `?${query}` : ''}`);
-    return res;
+    return request<{ products: Product[]; pagination: { total: number } }>(`/products${query ? `?${query}` : ''}`);
   },
 
   async get(id: string | number): Promise<ApiResponse<{ product: Product }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase.from('products').select('*').eq('id', String(id)).single();
+        if (error || !data) return { success: false, message: 'Produit introuvable' };
+        return {
+          success: true,
+          data: {
+            product: { ...data, ref_price: 0, price: 0 } as Product,
+          },
+        };
+      } catch (err: any) {
+        return { success: false, message: err?.message || 'Erreur lors de la récupération du produit' };
+      }
+    }
     return request<{ product: Product }>(`/products/${id}`);
   },
 
   async categories(): Promise<ApiResponse<{ categories: string[] }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase.from('categories').select('name').eq('is_active', true).order('sort_order');
+        if (!error && data) {
+          return {
+            success: true,
+            data: { categories: data.map((c: any) => c.name) },
+          };
+        }
+      } catch {
+        // Fallback to request
+      }
+    }
     return request<{ categories: string[] }>('/categories');
   },
 
@@ -233,26 +312,125 @@ export const Products = {
   },
 };
 
-// ── Orders ──
+// ── Commandes ──
 export const Orders = {
   async create(payload: CreateOrderPayload): Promise<ApiResponse<{ order: Order }>> {
-    const res = await request<{ order: Order }>('/orders', {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const currentUser = storage.getUser();
+        const orderNumber = 'CMD-' + new Date().getFullYear() + '-' + Math.floor(1000 + Math.random() * 9000);
+        const estName = payload.establishment_name || (payload as any).establishmentName || '';
+        const shipAddress = payload.shipping_address || payload.shippingAddress?.street || '';
+        const shipCity = payload.shipping_city || payload.shippingAddress?.city || 'Abidjan';
+        const shipNotes = payload.notes || payload.shippingAddress?.notes || '';
+
+        const { data: orderData, error: orderErr } = await supabase
+          .from('orders')
+          .insert({
+            order_number: orderNumber,
+            user_id: currentUser?.id || null,
+            establishment_name: estName,
+            shipping_address: shipAddress,
+            shipping_city: shipCity,
+            shipping_notes: shipNotes,
+            notes: shipNotes,
+            status: 'En attente de devis',
+          })
+          .select()
+          .single();
+
+        if (orderErr) {
+          return { success: false, message: orderErr.message };
+        }
+
+        if (payload.items && payload.items.length > 0) {
+          const itemsToInsert = payload.items.map((it) => ({
+            order_id: orderData.id,
+            product_id: it.productId ? String(it.productId) : null,
+            reference: it.reference || null,
+            name: it.name || 'Produit',
+            unit: it.unit || 'Unité',
+            conditionnement: it.conditionnement || null,
+            quantity: it.quantity || 1,
+            unit_price: 0,
+            line_total: 0,
+          }));
+
+          await supabase.from('order_items').insert(itemsToInsert);
+        }
+
+        const completeOrder: Order = {
+          ...orderData,
+          items: (payload.items || []) as any,
+        };
+
+        return { success: true, data: { order: completeOrder } };
+      } catch (err: any) {
+        return { success: false, message: err?.message || 'Erreur lors de la création de la commande' };
+      }
+    }
+
+    return request<{ order: Order }>('/orders', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
-    return res;
   },
 
   async list(params: Record<string, string | number> = {}): Promise<ApiResponse<{ orders: Order[] }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const user = storage.getUser();
+        let query = supabase.from('orders').select('*, items:order_items(*)');
+
+        if (user?.role !== 'admin' && user?.id) {
+          query = query.eq('user_id', user.id);
+        }
+
+        const { data, error } = await query.order('created_at', { ascending: false });
+        if (error) return { success: false, message: error.message };
+        return { success: true, data: { orders: (data || []) as Order[] } };
+      } catch (err: any) {
+        return { success: false, message: err?.message || 'Erreur lors du chargement des commandes' };
+      }
+    }
+
     const query = new URLSearchParams(params as Record<string, string>).toString();
     return request<{ orders: Order[] }>(`/orders${query ? `?${query}` : ''}`);
   },
 
   async get(id: string | number): Promise<ApiResponse<{ order: Order }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*, items:order_items(*)')
+          .or(`id.eq.${id},order_number.eq.${id}`)
+          .maybeSingle();
+
+        if (error || !data) {
+          return { success: false, message: 'Commande introuvable' };
+        }
+        return { success: true, data: { order: data as Order } };
+      } catch (err: any) {
+        return { success: false, message: err?.message || 'Erreur de récupération' };
+      }
+    }
     return request<{ order: Order }>(`/orders/${id}`);
   },
 
   async cancel(id: string | number, reason: string): Promise<ApiResponse<void>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { error } = await supabase
+          .from('orders')
+          .update({ status: 'Annulée', cancel_reason: reason, cancelled_at: new Date().toISOString() })
+          .eq('id', String(id));
+        if (error) return { success: false, message: error.message };
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, message: err?.message || 'Erreur lors de l\'annulation' };
+      }
+    }
     return request<void>(`/orders/${id}/cancel`, {
       method: 'PATCH',
       body: JSON.stringify({ reason }),
@@ -273,6 +451,7 @@ export const Orders = {
       const res = await fetch(`${baseUrl}/orders/show.php?id=${encodeURIComponent(id)}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
+      if (!res.ok) return {};
       return await res.json();
     } catch {
       return {};
@@ -280,7 +459,7 @@ export const Orders = {
   },
 };
 
-// ── Invoices ──
+// ── Factures ──
 export const Invoices = {
   async download(orderId: string | number): Promise<void> {
     const token = storage.getAuthToken();
@@ -290,13 +469,40 @@ export const Invoices = {
   },
 };
 
-// ── Users ──
+// ── Profils Utilisateurs ──
 export const Users = {
   async getProfile(): Promise<ApiResponse<{ user: User }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const currentUser = storage.getUser();
+        if (!currentUser?.id) return { success: false, message: 'Non authentifié' };
+        const { data, error } = await supabase.from('profiles').select('*').eq('id', currentUser.id).single();
+        if (error) return { success: false, message: error.message };
+        return { success: true, data: { user: data as User } };
+      } catch (err: any) {
+        return { success: false, message: err?.message };
+      }
+    }
     return request<{ user: User }>('/users/profile');
   },
 
   async updateProfile(data: Partial<User>): Promise<ApiResponse<{ user: User }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const currentUser = storage.getUser();
+        if (!currentUser?.id) return { success: false, message: 'Non authentifié' };
+        const { data: updated, error } = await supabase
+          .from('profiles')
+          .update(data)
+          .eq('id', currentUser.id)
+          .select()
+          .single();
+        if (error) return { success: false, message: error.message };
+        return { success: true, data: { user: updated as User } };
+      } catch (err: any) {
+        return { success: false, message: err?.message };
+      }
+    }
     return request<{ user: User }>('/users/profile', {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -304,6 +510,15 @@ export const Users = {
   },
 
   async updatePassword(currentPassword: string, newPassword: string): Promise<ApiResponse<void>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { error } = await supabase.auth.updateUser({ password: newPassword });
+        if (error) return { success: false, message: error.message };
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, message: err?.message };
+      }
+    }
     return request<void>('/users/password', {
       method: 'PUT',
       body: JSON.stringify({ currentPassword, newPassword }),
@@ -315,7 +530,7 @@ export const Users = {
   },
 };
 
-// ── Admin ──
+// ── Espace Administration ──
 export const Admin = {
   async dashboard(): Promise<ApiResponse<unknown>> {
     return request('/admin/dashboard');
@@ -422,6 +637,22 @@ export const Admin = {
 // ── Contact ──
 export const Contact = {
   async send(payload: { name: string; email: string; subject: string; message: string; phone?: string; org?: string }): Promise<ApiResponse<void>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { error } = await supabase.from('contact_messages').insert({
+          name: payload.name,
+          email: payload.email,
+          phone: payload.phone,
+          org: payload.org,
+          subject: payload.subject,
+          message: payload.message,
+        });
+        if (error) return { success: false, message: error.message };
+        return { success: true };
+      } catch (err: any) {
+        return { success: false, message: err?.message };
+      }
+    }
     return request<void>('/contact', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -429,7 +660,9 @@ export const Contact = {
   },
 };
 
-// Global CYM object alias for legacy compatibility
+import { InventaireService } from './inventaire';
+export { InventaireService };
+
 export const CYM = {
   Auth,
   Products,
@@ -438,4 +671,5 @@ export const CYM = {
   Users,
   Admin,
   Contact,
+  Inventaire: InventaireService,
 };
