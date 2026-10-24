@@ -19,6 +19,7 @@ import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useToast } from '../context/ToastContext';
 import { Orders } from '../services/api';
+import { notifyOrderWhatsApp } from '../services/whatsapp';
 import { storage } from '../utils/storage';
 
 export const Commande: React.FC = () => {
@@ -108,6 +109,21 @@ export const Commande: React.FC = () => {
       setIsSubmitted(true);
       showToast(`Commande envoyée avec succès (Statut : À chiffrer) → ${orderNumber}`, 'success');
       window.scrollTo({ top: 100, behavior: 'smooth' });
+
+      // ── Notification WhatsApp admin (fire-and-forget, non bloquant) ──
+      // L'échec de la notification ne doit pas bloquer la confirmation client
+      notifyOrderWhatsApp({
+        orderId: String(createdOrder.id),
+        orderNumber,
+        clientName: user ? [user.first_name, user.last_name].filter(Boolean).join(' ') || user.name || user.email : undefined,
+        establishmentName: establishmentName.trim() || undefined,
+        itemCount: items.length,
+        clientPhone: user?.phone || undefined,
+        notifyClient: false, // Mettre à true pour confirmer aussi le client
+      }).catch((err) => {
+        // Erreur silencieuse — la commande est déjà validée
+        console.warn('[Commande] Notification WhatsApp admin non envoyée :', err?.message || err);
+      });
     } catch (err: any) {
       console.error('[Commande] Erreur lors de la transmission :', err);
       showToast(err?.message || 'Erreur technique lors de la transmission de la commande.', 'error');

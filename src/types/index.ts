@@ -40,10 +40,13 @@ export interface RelanceLog {
   daysSinceLastOrder?: number;
   subject: string;
   message: string;
-  status: 'sent' | 'pending' | 'delivered';
+  /** Statut réel de l'envoi : 'sent' = API confirmée, 'failed' = API refusée, 'pending' = non configuré */
+  status: 'sent' | 'pending' | 'delivered' | 'failed';
   sent_at: string;
   whatsappDirectUrl?: string;
+  whatsapp_message_id?: string | null;
 }
+
 
 export interface Product {
   id: number | string;

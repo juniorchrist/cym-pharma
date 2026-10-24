@@ -41,6 +41,7 @@ import { useToast } from '../context/ToastContext';
 import { formatCurrency } from '../utils/currency';
 import { storage } from '../utils/storage';
 import { Admin as AdminApi } from '../services/api';
+import { sendWhatsAppRelance, triggerInactivityCheck } from '../services/whatsapp';
 import { Order, Product, User, OrderPricingSummary, PricingLine, RelanceLog } from '../types';
 import { CATALOG_CATEGORIES } from '../data/catalog';
 import { InventaireIndex } from './inventory';
@@ -182,15 +183,36 @@ export const Admin: React.FC = () => {
   };
 
   const handleManualCheckInactivity = async () => {
+    showToast('Vérification et relance automatique en cours…', 'info');
     try {
-      const res = await AdminApi.checkInactivity();
+      // Appel direct à l'Edge Function Supabase (relance WhatsApp réelle)
+      const res = await triggerInactivityCheck();
       if (res.success) {
-        showToast(res.message || 'Vérification automatique exécutée', 'success');
+        const sent = (res.relancesSent as any[]).filter((r) => r.status === 'sent').length;
+        const failed = (res.relancesSent as any[]).filter((r) => r.status === 'failed').length;
+        const msg = [
+          res.newlyInactive.length > 0 ? `${res.newlyInactive.length} client(s) nouvellement inactif(s) détecté(s).` : null,
+          sent > 0 ? `${sent} relance(s) WhatsApp envoyée(s).` : null,
+          failed > 0 ? `${failed} échec(s) d'envoi WhatsApp.` : null,
+        ].filter(Boolean).join(' ') || 'Aucun inactif détecté.';
+        showToast(msg, sent > 0 ? 'success' : 'info');
         loadUsers();
         loadRelances();
+      } else {
+        showToast(res.message || 'Erreur lors de la vérification', 'error');
       }
     } catch (err: any) {
-      showToast(err.message || 'Erreur lors de la vérification', 'error');
+      // Fallback : appel API backend classique si Edge Function non disponible
+      try {
+        const res = await AdminApi.checkInactivity();
+        if (res.success) {
+          showToast(res.message || 'Vérification automatisée exécutée', 'success');
+          loadUsers();
+          loadRelances();
+        }
+      } catch {
+        showToast(err?.message || 'Erreur lors de la vérification', 'error');
+      }
     }
   };
 
@@ -492,21 +514,68 @@ export const Admin: React.FC = () => {
     }
 
     try {
-      const res = await AdminApi.sendRelance(relanceUser.id, {
+      // Appel à l'Edge Function Supabase whatsapp-relance (envoi WhatsApp réel)
+      const waRes = await sendWhatsAppRelance(String(relanceUser.id), {
         subject: relanceSubject,
         message: relanceMessage,
         channel: 'multichannel',
       });
-      if (res.success) {
-        showToast(`Relance envoyée avec succès à ${relanceUser.establishment_name || relanceUser.name}.`, 'success');
+
+      if (waRes.relance) {
+        const status = waRes.relance.status;
+        const waUrl = waRes.relance.whatsappDirectUrl;
+
+        if (status === 'sent') {
+          showToast(`Relance WhatsApp envoyée à ${relanceUser.establishment_name || relanceUser.name}.`, 'success');
+        } else if (status === 'failed' && waUrl) {
+          showToast(
+            `Échec envoi WhatsApp automatique. Lien direct généré — cliquez Ouvrir WhatsApp.`,
+            'warning'
+          );
+          // Ouvrir le lien WhatsApp direct en secours
+          window.open(waUrl, '_blank', 'noopener,noreferrer');
+        } else {
+          showToast(waRes.message || 'Relance enregistrée (WhatsApp non configuré).', 'info');
+        }
+
         setIsRelanceModalOpen(false);
         loadUsers();
         loadRelances();
       } else {
-        showToast(res.message || 'Erreur lors de la relance', 'error');
+        // Fallback API REST classique si Edge Function non disponible
+        const res = await AdminApi.sendRelance(relanceUser.id, {
+          subject: relanceSubject,
+          message: relanceMessage,
+          channel: 'multichannel',
+        });
+        if (res.success) {
+          showToast(`Relance enregistrée pour ${relanceUser.establishment_name || relanceUser.name}.`, 'success');
+          setIsRelanceModalOpen(false);
+          loadUsers();
+          loadRelances();
+        } else {
+          showToast(res.message || 'Erreur lors de la relance', 'error');
+        }
       }
     } catch (err: any) {
-      showToast(err.message || 'Erreur lors de l\'envoi de la relance', 'error');
+      // Fallback final
+      try {
+        const res = await AdminApi.sendRelance(relanceUser.id, {
+          subject: relanceSubject,
+          message: relanceMessage,
+          channel: 'multichannel',
+        });
+        if (res.success) {
+          showToast(`Relance enregistrée pour ${relanceUser.establishment_name || relanceUser.name}.`, 'success');
+          setIsRelanceModalOpen(false);
+          loadUsers();
+          loadRelances();
+        } else {
+          showToast(res.message || 'Erreur lors de la relance', 'error');
+        }
+      } catch {
+        showToast(err?.message || 'Erreur lors de l\'envoi de la relance', 'error');
+      }
     }
   };
 
@@ -1443,9 +1512,19 @@ export const Admin: React.FC = () => {
                                       year: 'numeric',
                                     })}
                                   </span>
-                                  <span className="text-[9.5px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 inline-block">
-                                    Envoyée ({u.relance_count || 1}x)
-                                  </span>
+                                  {u.last_relance_status === 'sent' || u.last_relance_status === 'delivered' ? (
+                                    <span className="text-[9.5px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 inline-block">
+                                      Envoyée ({u.relance_count || 1}x)
+                                    </span>
+                                  ) : u.last_relance_status === 'failed' ? (
+                                    <span className="text-[9.5px] font-semibold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 inline-block">
+                                      Échec ({u.relance_count || 1}x)
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9.5px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 inline-block">
+                                      En attente ({u.relance_count || 1}x)
+                                    </span>
+                                  )}
                                 </div>
                               ) : isInactive ? (
                                 <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
@@ -1544,10 +1623,22 @@ export const Admin: React.FC = () => {
                               </span>
                             </td>
                             <td className="py-2.5">
-                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                                <CheckCircle2 className="w-3 h-3" />
-                                <span>Distribué</span>
-                              </span>
+                              {rel.status === 'sent' || rel.status === 'delivered' ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                  <CheckCircle2 className="w-3 h-3" />
+                                  <span>{rel.status === 'delivered' ? 'Distribué' : 'Envoyé'}</span>
+                                </span>
+                              ) : rel.status === 'failed' ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                                  <AlertTriangle className="w-3 h-3" />
+                                  <span>Échec API</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                  <Clock className="w-3 h-3" />
+                                  <span>En attente</span>
+                                </span>
+                              )}
                             </td>
                             <td className="py-2.5 text-right">
                               {rel.whatsappDirectUrl && (
