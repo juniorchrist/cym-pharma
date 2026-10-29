@@ -1,0 +1,23 @@
+# =====================================================================
+# CYM Pharma — robots.txt
+# Plateforme B2B Dispositifs Médicaux & Équipements — Côte d'Ivoire
+# =====================================================================
+
+User-agent: *
+Allow: /
+Allow: /accueil
+Allow: /catalogue
+Allow: /contact
+Allow: /devis
+Allow: /connexion
+Allow: /inscription
+
+# Bloquer l'indexation des zones privées et d'administration
+Disallow: /admin
+Disallow: /admin/
+Disallow: /compte
+Disallow: /mon-panier
+Disallow: /api/
+
+# Déclaration du plan du site officiel
+Sitemap: https://www.cympharma.ci/sitemap.xml

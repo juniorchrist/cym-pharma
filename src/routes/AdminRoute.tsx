@@ -9,22 +9,23 @@ interface AdminRouteProps {
 
 /**
  * Route protégée réservée exclusivement aux administrateurs authentifiés.
- * Vérifie le rôle 'admin' réel de la session.
+ * Exige impérativement une session active et le rôle 'admin' vérifié.
  */
 export const AdminRoute: React.FC<AdminRouteProps> = ({ children }) => {
   const { isAuthenticated, user } = useAuth();
   const location = useLocation();
 
-  // Non connecté → redirection vers la page de connexion avec mémorisation de l'URL
+  // 1. Accès accordé uniquement si l'utilisateur est authentifié avec le rôle admin actif
+  if (isAuthenticated && user?.role === 'admin' && user?.status === 'active') {
+    return <>{children}</>;
+  }
+
+  // 2. Non connecté → redirection vers la page de connexion
   if (!isAuthenticated) {
     storage.setRedirectAfterLogin(location.pathname + location.search);
     return <Navigate to="/connexion" replace />;
   }
 
-  // Connecté mais rôle non-admin → accès refusé, redirection dashboard client
-  if (user?.role !== 'admin') {
-    return <Navigate to="/dashboard" replace />;
-  }
-
-  return <>{children}</>;
+  // 3. Connecté mais rôle non-admin → accès refusé, redirection espace client
+  return <Navigate to="/dashboard" replace />;
 };

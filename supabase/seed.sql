@@ -2,6 +2,92 @@
 -- CYM PHARMA — SEED POSTGRESQL CATALOGUE MÉTIER RÉEL
 -- supabase/seed.sql
 -- =====================================================================
+-- ─────────────────────────────────────────────────────────────────────
+-- VÉRIFICATION ET CRÉATION DES TABLES SI NÉCESSAIRE
+-- Garantit que le seed ne produit jamais l'erreur "relation public.categories does not exist"
+-- ─────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.categories (
+  id          SERIAL PRIMARY KEY,
+  slug        TEXT NOT NULL UNIQUE,
+  name        TEXT NOT NULL,
+  parent_id   INTEGER REFERENCES public.categories(id) ON DELETE SET NULL,
+  sort_order  SMALLINT NOT NULL DEFAULT 0,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.products (
+  id                TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  reference         TEXT NOT NULL UNIQUE,
+  name              TEXT NOT NULL,
+  description       TEXT,
+  category          TEXT,
+  category_main     TEXT,
+  unit              TEXT DEFAULT 'Unité',
+  conditionnement   TEXT,
+  ref_price         NUMERIC(12,2) NOT NULL DEFAULT 0.00,
+  price             NUMERIC(12,2) NOT NULL DEFAULT 0.00,
+  currency          TEXT NOT NULL DEFAULT 'FCFA',
+  is_active         BOOLEAN NOT NULL DEFAULT TRUE,
+  is_published      BOOLEAN NOT NULL DEFAULT TRUE,
+  image_url         TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ─────────────────────────────────────────────────────────────────────
+-- ALIGNEMENT DE TYPE AUTOMATIQUE (smallint -> boolean)
+-- Permet à ce script d'insérer des booléens sans erreur même si les tables
+-- avaient été initialisées avec un schéma où is_active était en smallint.
+-- ─────────────────────────────────────────────────────────────────────
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  -- 1. Supprimer les anciennes contraintes CHECK qui comparent is_active ou is_published à un entier (0, 1)
+  FOR r IN (
+    SELECT c.conname, t.relname
+    FROM pg_constraint c
+    JOIN pg_class t ON c.conrelid = t.oid
+    JOIN pg_namespace n ON t.relnamespace = n.oid
+    WHERE n.nspname = 'public' 
+      AND t.relname IN ('categories', 'products', 'inventory_items')
+      AND c.contype = 'c'
+      AND (pg_get_constraintdef(c.oid) LIKE '%is_active%' OR pg_get_constraintdef(c.oid) LIKE '%is_published%')
+  ) LOOP
+    EXECUTE format('ALTER TABLE public.%I DROP CONSTRAINT IF EXISTS %I', r.relname, r.conname);
+  END LOOP;
+
+  -- 2. Conversion categories.is_active -> BOOLEAN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'categories' AND column_name = 'is_active' AND data_type <> 'boolean'
+  ) THEN
+    EXECUTE 'ALTER TABLE public.categories ALTER COLUMN is_active DROP DEFAULT';
+    EXECUTE 'ALTER TABLE public.categories ALTER COLUMN is_active TYPE BOOLEAN USING (CASE WHEN is_active::text IN (''1'', ''true'', ''t'') THEN TRUE ELSE FALSE END)';
+    EXECUTE 'ALTER TABLE public.categories ALTER COLUMN is_active SET DEFAULT TRUE';
+  END IF;
+
+  -- 3. Conversion products.is_active -> BOOLEAN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'products' AND column_name = 'is_active' AND data_type <> 'boolean'
+  ) THEN
+    EXECUTE 'ALTER TABLE public.products ALTER COLUMN is_active DROP DEFAULT';
+    EXECUTE 'ALTER TABLE public.products ALTER COLUMN is_active TYPE BOOLEAN USING (CASE WHEN is_active::text IN (''1'', ''true'', ''t'') THEN TRUE ELSE FALSE END)';
+    EXECUTE 'ALTER TABLE public.products ALTER COLUMN is_active SET DEFAULT TRUE';
+  END IF;
+
+  -- 4. Conversion products.is_published -> BOOLEAN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'products' AND column_name = 'is_published' AND data_type <> 'boolean'
+  ) THEN
+    EXECUTE 'ALTER TABLE public.products ALTER COLUMN is_published DROP DEFAULT';
+    EXECUTE 'ALTER TABLE public.products ALTER COLUMN is_published TYPE BOOLEAN USING (CASE WHEN is_published::text IN (''1'', ''true'', ''t'') THEN TRUE ELSE FALSE END)';
+    EXECUTE 'ALTER TABLE public.products ALTER COLUMN is_published SET DEFAULT TRUE';
+  END IF;
+END $$;
 
 -- 1. CATÉGORIES
 INSERT INTO public.categories (slug, name, sort_order, is_active) VALUES ('abaisse-langue', 'Abaisse langue', 1, true) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name;

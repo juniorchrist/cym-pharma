@@ -235,3 +235,10 @@ CREATE POLICY "contact_admin_update" ON public.contact_messages
   FOR UPDATE
   USING (public.is_admin())
   WITH CHECK (public.is_admin());
+
+-- ─────────────────────────────────────────────────────────────────────
+-- 12. PERMISSIONS D'EXÉCUTION DES FONCTIONS SÉCURISÉES
+-- ─────────────────────────────────────────────────────────────────────
+GRANT EXECUTE ON FUNCTION public.is_admin() TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.create_order_atomic(JSONB, JSONB) TO anon, authenticated, service_role;
+

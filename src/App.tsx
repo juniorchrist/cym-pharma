@@ -38,7 +38,14 @@ export default function App() {
               <Route path="/categorie/:slug" element={<Categorie />} />
               <Route path="/produit" element={<Produit />} />
               <Route path="/produit/:id" element={<Produit />} />
-              <Route path="/commande" element={<Commande />} />
+              <Route
+                path="/commande"
+                element={
+                  <ProtectedRoute>
+                    <Commande />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="/facture" element={<Facture />} />
               <Route path="/facture/:id" element={<Facture />} />
               <Route path="/bon-livraison" element={<BonLivraison />} />

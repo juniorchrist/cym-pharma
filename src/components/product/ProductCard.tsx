@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { ShoppingCart } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { ShoppingCart, LogIn } from 'lucide-react';
 import { Product } from '../../types';
 import { useCart } from '../../context/CartContext';
+import { useAuth } from '../../context/AuthContext';
+import { storage } from '../../utils/storage';
 import { ProductImageFallback } from './ProductImageFallback';
 
 interface ProductCardProps {
@@ -20,6 +22,8 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 }) => {
   const [qty, setQty] = useState(1);
   const { add } = useCart();
+  const { isAuthenticated } = useAuth();
+  const navigate = useNavigate();
 
   const handleMinus = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -33,6 +37,11 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
   const handleAdd = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!isAuthenticated) {
+      storage.setRedirectAfterLogin(window.location.pathname + window.location.search);
+      navigate('/connexion');
+      return;
+    }
     add(
       product.id,
       product.name,
@@ -121,10 +130,19 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           type="button"
           onClick={handleAdd}
           className="btn-add flex-1"
-          aria-label={`Ajouter ${product.name} au panier`}
+          aria-label={isAuthenticated ? `Ajouter ${product.name} au panier` : 'Se connecter pour ajouter au panier'}
         >
-          <ShoppingCart className="w-3.5 h-3.5" strokeWidth={2} />
-          <span>Ajouter</span>
+          {isAuthenticated ? (
+            <>
+              <ShoppingCart className="w-3.5 h-3.5" strokeWidth={2} />
+              <span>Ajouter</span>
+            </>
+          ) : (
+            <>
+              <LogIn className="w-3.5 h-3.5" strokeWidth={2} />
+              <span>Se connecter</span>
+            </>
+          )}
         </button>
       </div>
     </div>

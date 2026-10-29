@@ -2,10 +2,13 @@ import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { X, ShoppingBag } from 'lucide-react';
 import { useCart } from '../../context/CartContext';
+import { useAuth } from '../../context/AuthContext';
+import { storage } from '../../utils/storage';
 import { CartItemRow } from './CartItemRow';
 
 export const CartDrawer: React.FC = () => {
   const { isDrawerOpen, closeDrawer, items, count, updateQty, remove } = useCart();
+  const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
 
   if (!isDrawerOpen) return null;
@@ -14,6 +17,11 @@ export const CartDrawer: React.FC = () => {
 
   const handleValidateOrder = () => {
     closeDrawer();
+    if (!isAuthenticated) {
+      storage.setRedirectAfterLogin('/commande');
+      navigate('/connexion');
+      return;
+    }
     navigate('/commande');
   };
 

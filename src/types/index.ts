@@ -21,10 +21,41 @@ export interface User {
   became_inactive_at?: string;
   last_order_at?: string;
   days_since_last_order?: number;
+  is_server_inactive?: boolean | number;
   last_relance_at?: string;
+  last_reminder_at?: string;
   relance_count?: number;
-  last_relance_channel?: 'whatsapp' | 'email' | 'multichannel';
+  last_relance_channel?: string;
   last_relance_status?: string;
+  latest_reminder_status?: 'opened' | 'confirmed' | 'cancelled';
+  latest_reminder_opened_at?: string;
+  latest_reminder_id?: number | string;
+}
+
+export interface ClientReminder {
+  id: number | string;
+  user_id: string | number;
+  channel: 'whatsapp_manuel' | string;
+  template_key: string;
+  opened_by: string;
+  opened_at: string;
+  confirmed_at?: string | null;
+  status: 'opened' | 'confirmed' | 'cancelled';
+  name?: string;
+  first_name?: string;
+  last_name?: string;
+  phone?: string;
+  establishment_name?: string;
+  email?: string;
+}
+
+export interface ReminderTemplate {
+  template_key: string;
+  title: string;
+  content: string;
+  is_default: number | boolean;
+  sort_order: number;
+  warning_note?: string;
 }
 
 export interface RelanceLog {
@@ -40,7 +71,6 @@ export interface RelanceLog {
   daysSinceLastOrder?: number;
   subject: string;
   message: string;
-  /** Statut réel de l'envoi : 'sent' = API confirmée, 'failed' = API refusée, 'pending' = non configuré */
   status: 'sent' | 'pending' | 'delivered' | 'failed';
   sent_at: string;
   whatsappDirectUrl?: string;

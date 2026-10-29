@@ -1,0 +1,36 @@
+-- =====================================================================
+-- CYM PHARMA — SEED ADMINISTRATEUR (MySQL/MariaDB)
+-- database/seeds/admin.mysql.sql
+-- =====================================================================
+-- CE FICHIER NE CONTIENT AUCUN SECRET.
+-- Le hash bcrypt est un paramètre à injecter.
+-- =====================================================================
+-- Usage :
+--   1. Générer le hash   : php scripts/make-admin-sql.php mysql
+--   2. Copier la requête : INSERT INTO `users` ...
+--   3. Exécuter la requête directement en console MySQL ou via PHPMyAdmin.
+--
+-- Ne jamais stocker un vrai mot de passe ou un vrai hash dans ce fichier.
+-- =====================================================================
+
+-- Gabarit de requête (non exécutable tel quel) :
+--
+-- INSERT INTO `users` (id, email, password_hash, role, name, status, created_at, updated_at)
+-- VALUES (
+--   '<UUID_GENERE_PAR_SCRIPT>',
+--   '<EMAIL_ADMIN>',
+--   '<HASH_BCRYPT_GENERE_PAR_SCRIPT>',
+--   'admin',
+--   '<NOM_AFFICHE>',
+--   'active',
+--   NOW(),
+--   NOW()
+-- )
+-- ON DUPLICATE KEY UPDATE
+--   password_hash = VALUES(password_hash),
+--   role          = 'admin',
+--   status        = 'active',
+--   updated_at    = NOW();
+--
+-- Pour générer la requête avec les vraies valeurs, exécuter :
+--   php scripts/make-admin-sql.php mysql

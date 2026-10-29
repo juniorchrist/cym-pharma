@@ -35,18 +35,33 @@ import {
   Clock,
   MessageCircle,
   Boxes,
+  Phone,
+  Mail,
+  MessageSquare,
+  RotateCcw,
+  Sparkles,
+  UserCheck,
+  XCircle,
+  Info,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { formatCurrency } from '../utils/currency';
 import { storage } from '../utils/storage';
 import { Admin as AdminApi } from '../services/api';
-import { sendWhatsAppRelance, triggerInactivityCheck } from '../services/whatsapp';
-import { Order, Product, User, OrderPricingSummary, PricingLine, RelanceLog } from '../types';
+import { Order, Product, User, OrderPricingSummary, PricingLine, RelanceLog, ClientReminder, ReminderTemplate } from '../types';
+import { normalizeIvorianPhone, buildWhatsAppLink } from '../utils/phone';
+import {
+  getLocalReminderTemplates,
+  saveLocalReminderTemplates,
+  resetLocalReminderTemplates,
+  interpolateReminderMessage,
+  DEFAULT_REMINDER_TEMPLATES,
+} from '../utils/reminderTemplates';
 import { CATALOG_CATEGORIES } from '../data/catalog';
 import { InventaireIndex } from './inventory';
 
-type AdminPanel = 'panel-overview' | 'panel-products' | 'panel-orders' | 'panel-clients' | 'panel-inventory';
+type AdminPanel = 'panel-overview' | 'panel-products' | 'panel-orders' | 'panel-clients' | 'panel-inventory' | 'panel-templates';
 
 export const Admin: React.FC = () => {
   const { logout } = useAuth();
@@ -74,10 +89,53 @@ export const Admin: React.FC = () => {
   // Users & Relances state (Loaded live from backend engine)
   const [usersList, setUsersList] = useState<User[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
-  const [relancesList, setRelancesList] = useState<RelanceLog[]>([]);
-  const [relancesLoading, setRelancesLoading] = useState(false);
-  const [userFilterStatus, setUserFilterStatus] = useState('');
+  const [userFilterStatus, setUserFilterStatus] = useState<'all' | 'active' | 'inactive' | 'pending'>('all');
   const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [userCurrentPage, setUserCurrentPage] = useState(1);
+  const userItemsPerPage = 12;
+
+  // Manual WhatsApp Reminders & Templates State (Rule: 1 relance = 1 client = 1 clic)
+  const INACTIVITY_DAYS = 60;
+  const REMINDER_COOLDOWN_DAYS = 7;
+
+  const [reminderTemplates, setReminderTemplates] = useState<ReminderTemplate[]>(() => getLocalReminderTemplates());
+  const [selectedTemplateKey, setSelectedTemplateKey] = useState<string>('reprise_contact');
+  const [relanceUser, setRelanceUser] = useState<User | null>(null);
+  const [relanceCustomText, setRelanceCustomText] = useState<string>('');
+  const [isRelanceModalOpen, setIsRelanceModalOpen] = useState(false);
+
+  // Real client reminders audit list
+  const [clientRemindersList, setClientRemindersList] = useState<ClientReminder[]>([]);
+  const [clientRemindersLoading, setClientRemindersLoading] = useState(false);
+
+  // Pending reminder awaiting confirmation on tab return (visibilitychange)
+  interface PendingReminder {
+    reminderId?: number | string;
+    userId: number | string;
+    clientName: string;
+    structureName: string;
+    openedAt: number;
+  }
+  const [pendingReminder, setPendingReminder] = useState<PendingReminder | null>(() => {
+    try {
+      const stored = localStorage.getItem('cym_pending_reminder');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Date.now() - parsed.openedAt < 24 * 60 * 60 * 1000) return parsed;
+      }
+    } catch {}
+    return null;
+  });
+
+  // Phone correction modal state
+  const [isPhoneModalOpen, setIsPhoneModalOpen] = useState(false);
+  const [editingPhoneUser, setEditingPhoneUser] = useState<User | null>(null);
+  const [phoneInput, setPhoneInput] = useState('');
+  const [phoneSaving, setPhoneSaving] = useState(false);
+
+  // Template editor tab state
+  const [templateDrafts, setTemplateDrafts] = useState<Record<string, string>>({});
+  const [savingTemplateKey, setSavingTemplateKey] = useState<string | null>(null);
 
   // ── MODAL STATES ──
 
@@ -113,14 +171,6 @@ export const Admin: React.FC = () => {
   const [pricingLinePrices, setPricingLinePrices] = useState<Record<string, number>>({});
   const [pricingLoading, setPricingLoading] = useState(false);
   const [pricingActionLoading, setPricingActionLoading] = useState(false);
-
-  // Relance Modal
-  const [isRelanceModalOpen, setIsRelanceModalOpen] = useState(false);
-  const [relanceUser, setRelanceUser] = useState<User | null>(null);
-  const [relanceSubject, setRelanceSubject] = useState('📦 Nouveaux produits médicaux disponibles chez CYM Pharma');
-  const [relanceMessage, setRelanceMessage] = useState(
-    'Bonjour,\n\nNous avons récemment approvisionné notre stock en gants nitrile, compresses stériles et seringues 3 corps certifiés CE. Votre établissement bénéficie de nos tarifs B2B avec livraison express sur Abidjan.\n\nConnectez-vous pour consulter le catalogue.'
-  );
 
   // Invoice Preview State
   const [previewInvoiceOrder, setPreviewInvoiceOrder] = useState<Order | null>(null);
@@ -168,51 +218,29 @@ export const Admin: React.FC = () => {
     }
   };
 
-  const loadRelances = async () => {
-    setRelancesLoading(true);
+  const loadClientReminders = async () => {
+    setClientRemindersLoading(true);
     try {
-      const res = await AdminApi.relances();
-      if (res.success && res.data?.relances) {
-        setRelancesList(res.data.relances);
+      const res = await AdminApi.reminders();
+      if (res.success && res.data?.reminders) {
+        setClientRemindersList(res.data.reminders);
       }
     } catch (err) {
-      console.warn('Failed to load relances from API:', err);
+      console.warn('Failed to load reminders from API:', err);
     } finally {
-      setRelancesLoading(false);
+      setClientRemindersLoading(false);
     }
   };
 
-  const handleManualCheckInactivity = async () => {
-    showToast('Vérification et relance automatique en cours…', 'info');
+  const loadTemplates = async () => {
     try {
-      // Appel direct à l'Edge Function Supabase (relance WhatsApp réelle)
-      const res = await triggerInactivityCheck();
-      if (res.success) {
-        const sent = (res.relancesSent as any[]).filter((r) => r.status === 'sent').length;
-        const failed = (res.relancesSent as any[]).filter((r) => r.status === 'failed').length;
-        const msg = [
-          res.newlyInactive.length > 0 ? `${res.newlyInactive.length} client(s) nouvellement inactif(s) détecté(s).` : null,
-          sent > 0 ? `${sent} relance(s) WhatsApp envoyée(s).` : null,
-          failed > 0 ? `${failed} échec(s) d'envoi WhatsApp.` : null,
-        ].filter(Boolean).join(' ') || 'Aucun inactif détecté.';
-        showToast(msg, sent > 0 ? 'success' : 'info');
-        loadUsers();
-        loadRelances();
-      } else {
-        showToast(res.message || 'Erreur lors de la vérification', 'error');
+      const res = await AdminApi.reminderTemplates();
+      if (res.success && res.data?.templates && res.data.templates.length > 0) {
+        setReminderTemplates(res.data.templates);
+        saveLocalReminderTemplates(res.data.templates);
       }
-    } catch (err: any) {
-      // Fallback : appel API backend classique si Edge Function non disponible
-      try {
-        const res = await AdminApi.checkInactivity();
-        if (res.success) {
-          showToast(res.message || 'Vérification automatisée exécutée', 'success');
-          loadUsers();
-          loadRelances();
-        }
-      } catch {
-        showToast(err?.message || 'Erreur lors de la vérification', 'error');
-      }
+    } catch {
+      // Local templates already active
     }
   };
 
@@ -220,15 +248,41 @@ export const Admin: React.FC = () => {
     loadProducts();
     loadOrders();
     loadUsers();
-    loadRelances();
+    loadClientReminders();
+    loadTemplates();
+  }, []);
+
+  // Détection du retour sur l'onglet pour la barre de confirmation
+  useEffect(() => {
+    const handleTabReturn = () => {
+      if (document.visibilityState === 'visible') {
+        try {
+          const stored = localStorage.getItem('cym_pending_reminder');
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (Date.now() - parsed.openedAt < 24 * 60 * 60 * 1000) {
+              setPendingReminder(parsed);
+            }
+          }
+        } catch {}
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleTabReturn);
+    window.addEventListener('focus', handleTabReturn);
+    return () => {
+      document.removeEventListener('visibilitychange', handleTabReturn);
+      window.removeEventListener('focus', handleTabReturn);
+    };
   }, []);
 
   const sectionTitle = {
     'panel-overview': 'Tableau de bord',
     'panel-products': 'Gestion Produits & Prix de Référence (Privé Admin)',
     'panel-orders': 'Chiffrage des Commandes & Facturation',
-    'panel-clients': 'Gestion des Utilisateurs',
+    'panel-clients': 'Gestion des Utilisateurs & Relances WhatsApp',
     'panel-inventory': 'Gestion de l\'Inventaire & des Stocks (Privé Admin)',
+    'panel-templates': 'Modèles de Relance WhatsApp (Textes B2B)',
   }[activePanel];
 
   // ── PRODUCT ACTIONS ──
@@ -493,90 +547,387 @@ export const Admin: React.FC = () => {
     }
   };
 
-  const handleOpenRelanceModal = (user: User) => {
-    setRelanceUser(user);
-    const clientTitle = user.first_name && user.last_name ? `${user.first_name} ${user.last_name}` : (user.name || 'Client');
-    const structureName = user.establishment_name || 'votre établissement de santé';
-    const daysStr = user.days_since_last_order ? `${user.days_since_last_order} jours` : 'plus de deux mois';
+  // ── GESTION HONNÊTE DES RELANCES WHATSAPP & MODÈLES B2B ──
 
-    setRelanceSubject(`Reprise de vos approvisionnements médicaux — CYM Pharma (${structureName})`);
-    setRelanceMessage(
-      `Bonjour ${clientTitle},\n\nL'équipe commerciale de CYM Pharma espère que vous allez bien.\n\nNous constatons que ${structureName}, qui commandait habituellement chaque mois auprès de notre centrale, n'a passé aucune commande depuis ${daysStr}.\n\nDe nouveaux arrivages de consommables hospitaliers certifiés CE / ISO sont immédiatement disponibles dans notre entrepôt d'Abidjan (gants nitrile, sondes médicales, compresses, aiguilles, fils de suture).\n\nVous bénéficiez de vos tarifs partenaires B2B et d'une livraison express garantie sous 2h à Abidjan.\n\nSouhaitez-vous recevoir notre proforma actualisée ?\n\nContact direct : +225 07 09 55 40 20 • Email : commandes@cympharma.ci\n\nBien cordialement,\nCYM PHARMA SARL`
-    );
-    setIsRelanceModalOpen(true);
+  const isUserInactive = (u: User): boolean => {
+    if (u.status === 'inactive') return true;
+    if (u.status !== 'active') return false;
+    if (u.is_server_inactive === 1 || u.is_server_inactive === true) return true;
+    if (typeof u.days_since_last_order === 'number') {
+      return u.days_since_last_order >= INACTIVITY_DAYS;
+    }
+    if (u.last_order_at) {
+      const diff = Math.floor((Date.now() - new Date(u.last_order_at).getTime()) / (1000 * 60 * 60 * 24));
+      return diff >= INACTIVITY_DAYS;
+    }
+    if (u.created_at) {
+      const diff = Math.floor((Date.now() - new Date(u.created_at).getTime()) / (1000 * 60 * 60 * 24));
+      return diff >= INACTIVITY_DAYS;
+    }
+    return false;
   };
 
-  const handleSendRelance = async () => {
-    if (!relanceUser) return;
-    if (!relanceSubject.trim() || !relanceMessage.trim()) {
-      showToast("Veuillez renseigner l'objet et le message de relance.", 'error');
+  /**
+   * Clic direct sur "Relancer" :
+   * 1. Vérifie le cooldown (< 7 jours).
+   * 2. Vérifie la validité du numéro (+225 10 chiffres).
+   * 3. window.open(waUrl) appelé IMMÉDIATEMENT de façon synchrone (anti-bloqueur de popup).
+   * 4. Enregistre la relance en statut 'opened' auprès de l'API.
+   * 5. Active la demande de confirmation au retour sur l'onglet.
+   */
+  const handleDirectRelance = (user: User) => {
+    // 1. Avertissement si relancé il y a moins de 7 jours
+    if (user.last_reminder_at || user.last_relance_at) {
+      const lastDateStr = user.last_reminder_at || user.last_relance_at!;
+      const diffDays = Math.floor((Date.now() - new Date(lastDateStr).getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays < REMINDER_COOLDOWN_DAYS) {
+        const ok = window.confirm(
+          `Client déjà relancé il y a ${diffDays === 0 ? "moins d'un jour" : `${diffDays} jour(s)`}. Souhaitez-vous ouvrir quand même WhatsApp ?`
+        );
+        if (!ok) return;
+      }
+    }
+
+    // 2. Normalisation stricte du numéro
+    const norm = normalizeIvorianPhone(user.phone);
+    if (!norm.isValid || !norm.normalized) {
+      showToast(norm.error || 'Numéro invalide ou incomplet. Veuillez le corriger.', 'error');
+      handleOpenPhoneModal(user);
       return;
     }
 
+    // 3. Modèle par défaut (reprise_contact)
+    const defaultTmpl =
+      reminderTemplates.find((t) => t.is_default || t.template_key === 'reprise_contact') ||
+      reminderTemplates[0] ||
+      DEFAULT_REMINDER_TEMPLATES[0];
+
+    const message = interpolateReminderMessage(defaultTmpl.content, user);
+    let waUrl = '';
     try {
-      // Appel à l'Edge Function Supabase whatsapp-relance (envoi WhatsApp réel)
-      const waRes = await sendWhatsAppRelance(String(relanceUser.id), {
-        subject: relanceSubject,
-        message: relanceMessage,
-        channel: 'multichannel',
+      waUrl = buildWhatsAppLink(user.phone!, message);
+    } catch (err: any) {
+      showToast(err?.message || 'Erreur lors de la génération du lien WhatsApp', 'error');
+      return;
+    }
+
+    // 4. OUVERTURE SYNCHRONE IMMÉDIATE (Évite tout blocage par le navigateur)
+    window.open(waUrl, '_blank', 'noopener');
+
+    // 5. Enregistrer en attente de confirmation
+    const clientName = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.name || 'Client';
+    const structureName = user.establishment_name || user.org || 'Établissement';
+    const pending = {
+      userId: user.id,
+      clientName,
+      structureName,
+      openedAt: Date.now(),
+    };
+    setPendingReminder(pending);
+    try {
+      localStorage.setItem('cym_pending_reminder', JSON.stringify(pending));
+    } catch {}
+
+    // 6. Enregistrement asynchrone côté serveur en statut 'opened'
+    AdminApi.recordReminder(user.id, defaultTmpl.template_key)
+      .then((res) => {
+        if (res.success && res.data?.reminder?.id) {
+          const withId = { ...pending, reminderId: res.data.reminder.id };
+          setPendingReminder(withId);
+          try {
+            localStorage.setItem('cym_pending_reminder', JSON.stringify(withId));
+          } catch {}
+        }
+        // Mise à jour optimiste de la ligne dans la liste
+        setUsersList((prev) =>
+          prev.map((u) =>
+            u.id === user.id
+              ? {
+                  ...u,
+                  latest_reminder_status: 'opened',
+                  latest_reminder_opened_at: new Date().toISOString(),
+                  latest_reminder_id: res.data?.reminder?.id,
+                }
+              : u
+          )
+        );
+        loadClientReminders();
+      })
+      .catch((err) => {
+        console.warn('Trace relance enregistrée localement (backend hors-ligne):', err);
       });
 
-      if (waRes.relance) {
-        const status = waRes.relance.status;
-        const waUrl = waRes.relance.whatsappDirectUrl;
+    showToast(
+      `Discussion WhatsApp ouverte pour ${structureName}. N'oubliez pas de confirmer l'envoi à votre retour.`,
+      'info'
+    );
+  };
 
-        if (status === 'sent') {
-          showToast(`Relance WhatsApp envoyée à ${relanceUser.establishment_name || relanceUser.name}.`, 'success');
-        } else if (status === 'failed' && waUrl) {
-          showToast(
-            `Échec envoi WhatsApp automatique. Lien direct généré — cliquez Ouvrir WhatsApp.`,
-            'warning'
-          );
-          // Ouvrir le lien WhatsApp direct en secours
-          window.open(waUrl, '_blank', 'noopener,noreferrer');
-        } else {
-          showToast(waRes.message || 'Relance enregistrée (WhatsApp non configuré).', 'info');
-        }
+  /**
+   * Ouvre la modale pour choisir un autre modèle ou personnaliser le message
+   */
+  const handleOpenRelanceModal = (user: User) => {
+    setRelanceUser(user);
+    setSelectedTemplateKey('reprise_contact');
 
-        setIsRelanceModalOpen(false);
-        loadUsers();
-        loadRelances();
-      } else {
-        // Fallback API REST classique si Edge Function non disponible
-        const res = await AdminApi.sendRelance(relanceUser.id, {
-          subject: relanceSubject,
-          message: relanceMessage,
-          channel: 'multichannel',
-        });
-        if (res.success) {
-          showToast(`Relance enregistrée pour ${relanceUser.establishment_name || relanceUser.name}.`, 'success');
-          setIsRelanceModalOpen(false);
-          loadUsers();
-          loadRelances();
-        } else {
-          showToast(res.message || 'Erreur lors de la relance', 'error');
-        }
-      }
-    } catch (err: any) {
-      // Fallback final
-      try {
-        const res = await AdminApi.sendRelance(relanceUser.id, {
-          subject: relanceSubject,
-          message: relanceMessage,
-          channel: 'multichannel',
-        });
-        if (res.success) {
-          showToast(`Relance enregistrée pour ${relanceUser.establishment_name || relanceUser.name}.`, 'success');
-          setIsRelanceModalOpen(false);
-          loadUsers();
-          loadRelances();
-        } else {
-          showToast(res.message || 'Erreur lors de la relance', 'error');
-        }
-      } catch {
-        showToast(err?.message || 'Erreur lors de l\'envoi de la relance', 'error');
+    const defaultTmpl =
+      reminderTemplates.find((t) => t.template_key === 'reprise_contact') ||
+      reminderTemplates[0] ||
+      DEFAULT_REMINDER_TEMPLATES[0];
+
+    setRelanceCustomText(interpolateReminderMessage(defaultTmpl.content, user));
+    setIsRelanceModalOpen(true);
+  };
+
+  /**
+   * Changement de modèle dans la modale
+   */
+  const handleSelectModalTemplate = (key: string) => {
+    setSelectedTemplateKey(key);
+    if (!relanceUser) return;
+    const tmpl = reminderTemplates.find((t) => t.template_key === key);
+    if (tmpl) {
+      setRelanceCustomText(interpolateReminderMessage(tmpl.content, relanceUser));
+    }
+  };
+
+  /**
+   * Clic sur "Ouvrir WhatsApp" dans la modale
+   */
+  const handleModalOpenWhatsApp = () => {
+    if (!relanceUser) return;
+    if (!relanceCustomText.trim()) {
+      showToast('Le message ne peut pas être vide.', 'warning');
+      return;
+    }
+
+    // Cooldown check
+    if (relanceUser.last_reminder_at || relanceUser.last_relance_at) {
+      const lastDateStr = relanceUser.last_reminder_at || relanceUser.last_relance_at!;
+      const diffDays = Math.floor((Date.now() - new Date(lastDateStr).getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays < REMINDER_COOLDOWN_DAYS) {
+        const ok = window.confirm(
+          `Client déjà relancé il y a ${diffDays === 0 ? "moins d'un jour" : `${diffDays} jour(s)`}. Ouvrir quand même WhatsApp ?`
+        );
+        if (!ok) return;
       }
     }
+
+    const norm = normalizeIvorianPhone(relanceUser.phone);
+    if (!norm.isValid || !norm.normalized) {
+      showToast(norm.error || 'Numéro invalide. Veuillez le corriger.', 'error');
+      handleOpenPhoneModal(relanceUser);
+      return;
+    }
+
+    let waUrl = '';
+    try {
+      waUrl = buildWhatsAppLink(relanceUser.phone!, relanceCustomText);
+    } catch (err: any) {
+      showToast(err?.message || 'Erreur lors de la génération du lien WhatsApp', 'error');
+      return;
+    }
+
+    // OUVERTURE SYNCHRONE IMMÉDIATE
+    window.open(waUrl, '_blank', 'noopener');
+    setIsRelanceModalOpen(false);
+
+    const clientName = [relanceUser.first_name, relanceUser.last_name].filter(Boolean).join(' ') || relanceUser.name || 'Client';
+    const structureName = relanceUser.establishment_name || relanceUser.org || 'Établissement';
+    const pending = {
+      userId: relanceUser.id,
+      clientName,
+      structureName,
+      openedAt: Date.now(),
+    };
+    setPendingReminder(pending);
+    try {
+      localStorage.setItem('cym_pending_reminder', JSON.stringify(pending));
+    } catch {}
+
+    AdminApi.recordReminder(relanceUser.id, selectedTemplateKey)
+      .then((res) => {
+        if (res.success && res.data?.reminder?.id) {
+          const withId = { ...pending, reminderId: res.data.reminder.id };
+          setPendingReminder(withId);
+          try {
+            localStorage.setItem('cym_pending_reminder', JSON.stringify(withId));
+          } catch {}
+        }
+        setUsersList((prev) =>
+          prev.map((u) =>
+            u.id === relanceUser.id
+              ? {
+                  ...u,
+                  latest_reminder_status: 'opened',
+                  latest_reminder_opened_at: new Date().toISOString(),
+                  latest_reminder_id: res.data?.reminder?.id,
+                }
+              : u
+          )
+        );
+        loadClientReminders();
+      })
+      .catch(() => {});
+
+    showToast(
+      `Discussion WhatsApp ouverte pour ${structureName}. N'oubliez pas de confirmer l'envoi à votre retour.`,
+      'info'
+    );
+  };
+
+  /**
+   * Confirmation réelle de la relance (par la barre flottante ou le bouton de ligne)
+   */
+  const handleConfirmReminder = async (pending: { reminderId?: number | string; userId: number | string; structureName?: string }) => {
+    try {
+      if (pending.reminderId) {
+        await AdminApi.confirmReminder(pending.reminderId);
+      }
+      setUsersList((prev) =>
+        prev.map((u) =>
+          String(u.id) === String(pending.userId)
+            ? {
+                ...u,
+                last_reminder_at: new Date().toISOString(),
+                latest_reminder_status: 'confirmed',
+              }
+            : u
+        )
+      );
+      showToast(`Relance WhatsApp confirmée avec succès pour ${pending.structureName || 'le client'}.`, 'success');
+    } catch {
+      showToast('Relance confirmée localement.', 'success');
+    } finally {
+      if (pendingReminder && String(pendingReminder.userId) === String(pending.userId)) {
+        setPendingReminder(null);
+        try {
+          localStorage.removeItem('cym_pending_reminder');
+        } catch {}
+      }
+      loadUsers();
+      loadClientReminders();
+    }
+  };
+
+  /**
+   * Annulation de la relance (non envoyée ou abandonnée)
+   */
+  const handleCancelReminder = async (pending: { reminderId?: number | string; userId: number | string }) => {
+    try {
+      if (pending.reminderId) {
+        await AdminApi.cancelReminder(pending.reminderId);
+      }
+      setUsersList((prev) =>
+        prev.map((u) =>
+          String(u.id) === String(pending.userId)
+            ? { ...u, latest_reminder_status: 'cancelled' }
+            : u
+        )
+      );
+      showToast('Relance marquée comme non envoyée / annulée.', 'info');
+    } catch {
+      showToast('Relance annulée.', 'info');
+    } finally {
+      if (pendingReminder && String(pendingReminder.userId) === String(pending.userId)) {
+        setPendingReminder(null);
+        try {
+          localStorage.removeItem('cym_pending_reminder');
+        } catch {}
+      }
+      loadUsers();
+      loadClientReminders();
+    }
+  };
+
+  /**
+   * Modale de correction rapide du téléphone
+   */
+  const handleOpenPhoneModal = (user: User) => {
+    setEditingPhoneUser(user);
+    setPhoneInput(user.phone || '');
+    setIsPhoneModalOpen(true);
+  };
+
+  const handleSavePhone = async () => {
+    if (!editingPhoneUser) return;
+    const norm = normalizeIvorianPhone(phoneInput);
+    if (!norm.isValid) {
+      showToast(norm.error || 'Numéro invalide.', 'error');
+      return;
+    }
+
+    setPhoneSaving(true);
+    try {
+      const res = await AdminApi.updateUserPhone(editingPhoneUser.id, phoneInput);
+      if (res.success) {
+        showToast('Numéro de téléphone mis à jour avec succès.', 'success');
+        setUsersList((prev) =>
+          prev.map((u) =>
+            u.id === editingPhoneUser.id
+              ? { ...u, phone: norm.formatted }
+              : u
+          )
+        );
+        setIsPhoneModalOpen(false);
+      } else {
+        showToast(res.message || 'Impossible de mettre à jour le téléphone.', 'error');
+      }
+    } catch {
+      // Mise à jour locale
+      setUsersList((prev) =>
+        prev.map((u) =>
+          u.id === editingPhoneUser.id
+            ? { ...u, phone: norm.formatted }
+            : u
+        )
+      );
+      showToast('Numéro mis à jour localement.', 'success');
+      setIsPhoneModalOpen(false);
+    } finally {
+      setPhoneSaving(false);
+    }
+  };
+
+  /**
+   * Sauvegarde d'un modèle de message
+   */
+  const handleSaveTemplate = async (templateKey: string, content: string, title?: string) => {
+    setSavingTemplateKey(templateKey);
+    try {
+      const res = await AdminApi.updateReminderTemplate(templateKey, content, title);
+      const updated = reminderTemplates.map((t) =>
+        t.template_key === templateKey ? { ...t, content, title: title || t.title } : t
+      );
+      setReminderTemplates(updated);
+      saveLocalReminderTemplates(updated);
+      showToast(res.message || 'Modèle de message enregistré avec succès.', 'success');
+    } catch {
+      const updated = reminderTemplates.map((t) =>
+        t.template_key === templateKey ? { ...t, content, title: title || t.title } : t
+      );
+      setReminderTemplates(updated);
+      saveLocalReminderTemplates(updated);
+      showToast('Modèle enregistré localement.', 'success');
+    } finally {
+      setSavingTemplateKey(null);
+    }
+  };
+
+  /**
+   * Rétablir les modèles par défaut officiels CYM Pharma
+   */
+  const handleResetDefaultTemplates = async () => {
+    if (!window.confirm('Rétablir tous les modèles de relance aux textes officiels d\'origine ?')) {
+      return;
+    }
+    try {
+      await AdminApi.resetReminderTemplates();
+    } catch {}
+    const defaults = resetLocalReminderTemplates();
+    setReminderTemplates(defaults);
+    setTemplateDrafts({});
+    showToast('Modèles réinitialisés aux valeurs d\'origine sans emoji.', 'info');
   };
 
   // Filtered products list
@@ -629,16 +980,34 @@ export const Admin: React.FC = () => {
 
   const filteredUsers = useMemo(() => {
     return usersList.filter((u) => {
-      const matchesStatus = !userFilterStatus || u.status === userFilterStatus;
+      let matchesStatus = true;
+      if (userFilterStatus === 'inactive') {
+        matchesStatus = isUserInactive(u);
+      } else if (userFilterStatus === 'active') {
+        matchesStatus = u.status === 'active' && !isUserInactive(u);
+      } else if (userFilterStatus === 'pending') {
+        matchesStatus = u.status === 'pending';
+      }
+
       const q = (userSearchQuery || globalSearch).toLowerCase().trim();
       const matchesQuery =
         !q ||
         `${u.first_name || ''} ${u.last_name || ''}`.toLowerCase().includes(q) ||
+        (u.name && u.name.toLowerCase().includes(q)) ||
         (u.email && u.email.toLowerCase().includes(q)) ||
-        (u.establishment_name && u.establishment_name.toLowerCase().includes(q));
+        (u.establishment_name && u.establishment_name.toLowerCase().includes(q)) ||
+        (u.phone && u.phone.toLowerCase().includes(q)) ||
+        (u.commune && u.commune.toLowerCase().includes(q));
+
       return matchesStatus && matchesQuery;
     });
   }, [usersList, userFilterStatus, userSearchQuery, globalSearch]);
+
+  const totalUserPages = Math.ceil(filteredUsers.length / userItemsPerPage) || 1;
+  const paginatedUsers = useMemo(() => {
+    const start = (userCurrentPage - 1) * userItemsPerPage;
+    return filteredUsers.slice(start, start + userItemsPerPage);
+  }, [filteredUsers, userCurrentPage]);
 
   // Unique categories for filter
   const productCategories = useMemo(() => {
@@ -783,6 +1152,20 @@ export const Admin: React.FC = () => {
                   </span>
                   <span>Utilisateurs</span>
                 </button>
+
+                <button
+                  type="button"
+                  className={`admin-nav-item ${activePanel === 'panel-templates' ? 'active' : ''}`}
+                  onClick={() => {
+                    setActivePanel('panel-templates');
+                    setSidebarOpen(false);
+                  }}
+                >
+                  <span className="nav-icon-wrap">
+                    <FileText className="w-3.5 h-3.5" strokeWidth={2} />
+                  </span>
+                  <span>Modèles de relance</span>
+                </button>
               </nav>
             </div>
 
@@ -827,6 +1210,58 @@ export const Admin: React.FC = () => {
 
         {/* MAIN WORKSPACE */}
         <main className="flex-1 lg:ml-64 p-6 sm:p-8 lg:p-10 min-w-0">
+          {/* BARRE DE CONFIRMATION AU RETOUR SUR L'ONGLET */}
+          {pendingReminder && (
+            <aside
+              aria-label="Confirmation de relance WhatsApp"
+              className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white shadow-xl border border-blue-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-3 duration-300"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center shrink-0 text-emerald-400">
+                  <MessageCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <p className="text-[10.5px] font-extrabold text-blue-200 uppercase tracking-widest">
+                      Confirmation de relance requise
+                    </p>
+                  </div>
+                  <p className="text-sm font-bold text-white mt-0.5">
+                    Avez-vous envoyé le message WhatsApp à{' '}
+                    <span className="text-emerald-300 underline underline-offset-2">
+                      {pendingReminder.structureName}
+                    </span>{' '}
+                    ({pendingReminder.clientName}) ?
+                  </p>
+                  <p className="text-[11px] text-blue-200/80">
+                    Le site ne fait qu'ouvrir WhatsApp : votre confirmation est nécessaire pour actualiser la date de dernière relance.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => handleConfirmReminder(pendingReminder)}
+                  className="min-h-[44px] px-4 py-2 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-600 text-white transition flex items-center gap-1.5 cursor-pointer shadow-md"
+                  aria-label="Oui, relancé"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Oui, relancé</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCancelReminder(pendingReminder)}
+                  className="min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-semibold bg-white/10 hover:bg-white/20 text-blue-100 hover:text-white transition cursor-pointer"
+                  aria-label="Non, relance non envoyée"
+                >
+                  <span>Non</span>
+                </button>
+              </div>
+            </aside>
+          )}
+
           {/* Header Title */}
           <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
@@ -1369,32 +1804,47 @@ export const Admin: React.FC = () => {
             </div>
           )}
 
+          {/* ================= PANEL 4: UTILISATEURS & RELANCES MANUELLES WHATSAPP ================= */}
           {activePanel === 'panel-clients' && (
             <div id="panel-clients" className="panel active space-y-6">
-              {/* Automation Engine Banner */}
-              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-blue-900 to-indigo-900 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              {/* Honest Module Banner */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
                     <span className="text-xs font-extrabold uppercase tracking-widest text-blue-200">
-                      Module d'Inactivité &amp; Relances Automatiques B2B
+                      Relance Manuelle WhatsApp B2B
                     </span>
                   </div>
                   <h3 className="text-base sm:text-lg font-bold">
-                    Supervision proactive des commandes officinales &amp; hospitalières
+                    Supervision des clients inactifs (≥ 60 jours sans commande)
                   </h3>
                   <p className="text-xs text-blue-100 max-w-2xl leading-relaxed">
-                    Les clients réguliers sans commande depuis plus de 60 jours sont automatiquement basculés en statut <strong>« Inactif »</strong> côté backend et reçoivent immédiatement un message de réapprovisionnement personnalisé via <strong>WhatsApp Business (+225 07 09 55 40 20)</strong> et Email.
+                    Un clic sur <strong>« Relancer »</strong> ouvre directement la discussion privée WhatsApp de votre client avec le message officiel pré-rempli. Aucun envoi automatique : vous relisez et envoyez depuis votre propre WhatsApp.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleManualCheckInactivity}
-                  className="px-4 py-2.5 rounded-xl text-xs font-bold bg-white text-blue-900 hover:bg-blue-50 transition shadow-sm inline-flex items-center gap-2 shrink-0 self-start sm:self-auto cursor-pointer"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Vérifier &amp; Relancer maintenant</span>
-                </button>
+                <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      loadUsers();
+                      loadClientReminders();
+                      showToast('Données utilisateurs et relances actualisées.', 'info');
+                    }}
+                    className="min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-bold bg-white text-blue-900 hover:bg-blue-50 transition shadow-sm inline-flex items-center gap-2 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Actualiser</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActivePanel('panel-templates')}
+                    className="min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-800/80 hover:bg-blue-700 text-white transition inline-flex items-center gap-1.5 cursor-pointer border border-blue-600/40"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Gérer les modèles</span>
+                  </button>
+                </div>
               </div>
 
               {/* 4 KPIs */}
@@ -1407,182 +1857,525 @@ export const Admin: React.FC = () => {
                 <div className="admin-card p-4">
                   <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Actifs (&lt; 60j)</p>
                   <p className="text-2xl font-bold text-emerald-600">
-                    {usersList.filter((u) => u.status === 'active').length}
+                    {usersList.filter((u) => u.status === 'active' && !isUserInactive(u)).length}
                   </p>
                   <p className="text-[11px] text-emerald-700 mt-0.5">Commandes régulières</p>
                 </div>
                 <div className="admin-card p-4">
-                  <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Inactifs (&gt; 60j)</p>
+                  <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Inactifs (≥ 60j)</p>
                   <p className="text-2xl font-bold text-rose-600">
-                    {usersList.filter((u) => u.status === 'inactive' || (typeof u.days_since_last_order === 'number' && u.days_since_last_order > 60)).length}
+                    {usersList.filter((u) => isUserInactive(u)).length}
                   </p>
-                  <p className="text-[11px] text-rose-600 font-medium mt-0.5">Détectés automatiquement</p>
+                  <p className="text-[11px] text-rose-600 font-medium mt-0.5">Sans commande récente</p>
                 </div>
                 <div className="admin-card p-4">
-                  <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Relances Envoyées</p>
+                  <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Relances Confirmées</p>
                   <p className="text-2xl font-bold text-[var(--primary)]">
-                    {relancesList.length}
+                    {clientRemindersList.filter((r) => r.status === 'confirmed').length || usersList.filter((u) => u.last_reminder_at).length}
                   </p>
-                  <p className="text-[11px] text-slate-500 mt-0.5">WhatsApp / Email B2B</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Validées par l'admin</p>
                 </div>
               </div>
 
-              {/* Client List Table */}
-              <div className="admin-card p-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
+              {/* Client List Card */}
+              <div className="admin-card p-4 sm:p-6 space-y-5">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div>
                     <h2 className="text-base font-bold text-slate-900">Gestion des Comptes Clients &amp; Établissements</h2>
-                    <p className="text-xs text-slate-500">Statuts d'activité, commandes mensuelles et suivi des relances</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Filtre d'inactivité à 60 jours, relance WhatsApp manuelle en 1 clic et contrôle des numéros +225
+                    </p>
+                  </div>
+
+                  {/* Filter Tabs & Search */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserFilterStatus('all');
+                          setUserCurrentPage(1);
+                        }}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
+                          userFilterStatus === 'all'
+                            ? 'bg-white text-slate-900 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Tous ({usersList.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserFilterStatus('active');
+                          setUserCurrentPage(1);
+                        }}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
+                          userFilterStatus === 'active'
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Actifs ({usersList.filter((u) => u.status === 'active' && !isUserInactive(u)).length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserFilterStatus('inactive');
+                          setUserCurrentPage(1);
+                        }}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
+                          userFilterStatus === 'inactive'
+                            ? 'bg-rose-600 text-white shadow-xs'
+                            : 'text-rose-700 hover:bg-rose-50'
+                        }`}
+                      >
+                        Inactifs ({usersList.filter((u) => isUserInactive(u)).length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserFilterStatus('pending');
+                          setUserCurrentPage(1);
+                        }}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
+                          userFilterStatus === 'pending'
+                            ? 'bg-amber-600 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        En attente ({usersList.filter((u) => u.status === 'pending').length})
+                      </button>
+                    </div>
+
+                    <div className="relative min-w-[200px]">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={userSearchQuery}
+                        onChange={(e) => {
+                          setUserSearchQuery(e.target.value);
+                          setUserCurrentPage(1);
+                        }}
+                        placeholder="Filtrer client, officine, ville..."
+                        className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white outline-none focus:border-[var(--primary)]"
+                      />
+                    </div>
                   </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-slate-400 uppercase tracking-wider text-[10px]">
-                        <th className="pb-3 font-semibold">Client / Contact</th>
-                        <th className="pb-3 font-semibold">Établissement</th>
-                        <th className="pb-3 font-semibold">Fréquence &amp; Dernière commande</th>
-                        <th className="pb-3 font-semibold">Statut</th>
-                        <th className="pb-3 font-semibold">Dernière Relance</th>
-                        <th className="pb-3 font-semibold text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody id="u-table-body" className="divide-y divide-slate-100">
-                      {filteredUsers.map((u) => {
-                        const isInactive = u.status === 'inactive' || (typeof u.days_since_last_order === 'number' && u.days_since_last_order > 60);
-                        const daysAgo = typeof u.days_since_last_order === 'number' ? u.days_since_last_order : null;
+                {/* Empty State */}
+                {filteredUsers.length === 0 ? (
+                  <div className="py-12 text-center space-y-2 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
+                    <p className="text-sm font-bold text-slate-700">
+                      {userFilterStatus === 'inactive'
+                        ? 'Aucun client inactif'
+                        : 'Aucun utilisateur trouvé'}
+                    </p>
+                    <p className="text-xs text-slate-400 max-w-md mx-auto">
+                      {userFilterStatus === 'inactive'
+                        ? 'Tous vos clients actifs ont passé commande au cours des 60 derniers jours. Aucun réapprovisionnement à relancer.'
+                        : 'Aucun compte ne correspond à vos critères de recherche actuels.'}
+                    </p>
+                    {userFilterStatus !== 'all' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserFilterStatus('all');
+                          setUserSearchQuery('');
+                        }}
+                        className="mt-2 px-3 py-1.5 text-xs font-semibold text-[var(--primary)] hover:underline cursor-pointer"
+                      >
+                        Réinitialiser les filtres
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    {/* Desktop Table View (≥ 768px) */}
+                    <div className="hidden md:block overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-slate-400 uppercase tracking-wider text-[10px]">
+                            <th className="pb-3 font-semibold">Client / Contact</th>
+                            <th className="pb-3 font-semibold">Établissement</th>
+                            <th className="pb-3 font-semibold">Dernière commande</th>
+                            <th className="pb-3 font-semibold">Statut</th>
+                            <th className="pb-3 font-semibold">Dernière Relance</th>
+                            <th className="pb-3 font-semibold text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody id="u-table-body" className="divide-y divide-slate-100">
+                          {paginatedUsers.map((u) => {
+                            const inactive = isUserInactive(u);
+                            const phoneCheck = normalizeIvorianPhone(u.phone);
+                            const daysAgo =
+                              typeof u.days_since_last_order === 'number'
+                                ? u.days_since_last_order
+                                : u.last_order_at
+                                ? Math.floor((Date.now() - new Date(u.last_order_at).getTime()) / (1000 * 60 * 60 * 24))
+                                : null;
 
-                        return (
-                          <tr key={u.id} className="hover:bg-slate-50 transition">
-                            <td className="py-3">
-                              <p className="font-bold text-slate-900">{u.first_name || ''} {u.last_name || ''}</p>
-                              <p className="text-[11px] text-slate-500 font-mono">{u.email}</p>
-                              <p className="text-[11px] text-slate-600">{u.phone || 'Non renseigné'}</p>
-                            </td>
-                            <td className="py-3">
-                              <p className="font-semibold text-slate-800">{u.establishment_name || 'Sans structure'}</p>
-                              <p className="text-[11px] text-slate-400">{u.commune || 'Abidjan'} • {u.establishment_type || 'B2B'}</p>
-                            </td>
-                            <td className="py-3">
-                              <div className="space-y-0.5">
-                                <span className="font-semibold text-slate-700 block">
-                                  {u.total_orders || 0} commande(s) passée(s)
-                                </span>
-                                {daysAgo !== null ? (
-                                  <span
-                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
-                                      daysAgo > 60
-                                        ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                                        : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                    }`}
-                                  >
-                                    <Clock className="w-3 h-3" />
-                                    <span>Il y a {daysAgo} jours</span>
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] text-slate-400 italic">Aucune commande</span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="py-3">
-                              {isInactive ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                                  <AlertTriangle className="w-3 h-3" />
-                                  <span>Inactif (&gt; 60j)</span>
-                                </span>
-                              ) : u.status === 'active' ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                  <CheckCircle2 className="w-3 h-3" />
-                                  <span>Actif</span>
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                                  <span>En attente</span>
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-3">
-                              {u.last_relance_at ? (
-                                <div className="space-y-0.5">
-                                  <span className="text-[10.5px] font-bold text-slate-800 block">
-                                    {new Date(u.last_relance_at).toLocaleDateString('fr-FR', {
-                                      day: '2-digit',
-                                      month: 'short',
-                                      year: 'numeric',
-                                    })}
-                                  </span>
-                                  {u.last_relance_status === 'sent' || u.last_relance_status === 'delivered' ? (
-                                    <span className="text-[9.5px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 inline-block">
-                                      Envoyée ({u.relance_count || 1}x)
+                            return (
+                              <tr key={u.id} className="hover:bg-slate-50 transition">
+                                <td className="py-3">
+                                  <p className="font-bold text-slate-900">
+                                    {u.first_name || ''} {u.last_name || ''}
+                                  </p>
+                                  <p className="text-[11px] text-slate-500 font-mono">{u.email}</p>
+                                  <div className="mt-1 flex items-center gap-1.5">
+                                    {phoneCheck.isValid ? (
+                                      <span className="text-[11px] font-semibold text-slate-700 flex items-center gap-1">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                        <span>{phoneCheck.formatted}</span>
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 inline-flex items-center gap-1">
+                                        <AlertTriangle className="w-2.5 h-2.5 shrink-0" />
+                                        <span>{u.phone || 'Non renseigné'}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenPhoneModal(u)}
+                                          className="underline text-[10px] font-bold text-rose-700 hover:text-rose-900 ml-1 cursor-pointer"
+                                        >
+                                          Corriger
+                                        </button>
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+
+                                <td className="py-3">
+                                  <p className="font-semibold text-slate-800">{u.establishment_name || 'Sans structure'}</p>
+                                  <p className="text-[11px] text-slate-400">
+                                    {u.commune || 'Abidjan'} • {u.establishment_type || 'B2B'}
+                                  </p>
+                                </td>
+
+                                <td className="py-3">
+                                  <div className="space-y-0.5">
+                                    <span className="font-semibold text-slate-700 block">
+                                      {u.total_orders || 0} commande(s) passée(s)
                                     </span>
-                                  ) : u.last_relance_status === 'failed' ? (
-                                    <span className="text-[9.5px] font-semibold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 inline-block">
-                                      Échec ({u.relance_count || 1}x)
+                                    {daysAgo !== null ? (
+                                      <span
+                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
+                                          daysAgo >= INACTIVITY_DAYS
+                                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                        }`}
+                                      >
+                                        <Clock className="w-3 h-3" />
+                                        <span>Il y a {daysAgo} jours</span>
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] text-slate-400 italic">Aucune commande</span>
+                                    )}
+                                  </div>
+                                </td>
+
+                                <td className="py-3">
+                                  {inactive ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                      <AlertTriangle className="w-3 h-3" />
+                                      <span>Inactif (≥ 60j)</span>
+                                    </span>
+                                  ) : u.status === 'active' ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                      <CheckCircle2 className="w-3 h-3" />
+                                      <span>Actif</span>
                                     </span>
                                   ) : (
-                                    <span className="text-[9.5px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 inline-block">
-                                      En attente ({u.relance_count || 1}x)
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                      <span>En attente</span>
                                     </span>
                                   )}
-                                </div>
-                              ) : isInactive ? (
-                                <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                                  À relancer
-                                </span>
-                              ) : (
-                                <span className="text-[10px] text-slate-400">Non requis</span>
-                              )}
-                            </td>
-                            <td className="py-3 text-right">
-                              <div className="flex items-center justify-end gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenRelanceModal(u)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition cursor-pointer shadow-2xs"
-                                  title="Ouvrir le message de relance B2B"
-                                >
-                                  <MessageCircle className="w-3 h-3" />
-                                  <span>Relancer</span>
-                                </button>
-                                <select
-                                  value={u.status}
-                                  onChange={(e) => handleUpdateUserStatus(u.id, e.target.value)}
-                                  className="text-[11px] font-semibold py-1 px-2 rounded-lg border border-slate-200 bg-white cursor-pointer"
-                                >
-                                  <option value="active">Actif</option>
-                                  <option value="pending">En attente</option>
-                                  <option value="inactive">Inactif</option>
-                                </select>
+                                </td>
+
+                                <td className="py-3">
+                                  {/* Statuts honnêtes uniquement : Relancé, Ouvert — à confirmer, Annulé */}
+                                  {u.latest_reminder_status === 'opened' ? (
+                                    <div className="space-y-1">
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-300">
+                                        <Clock className="w-3 h-3 text-amber-600 animate-spin" />
+                                        <span>Ouvert — à confirmer</span>
+                                      </span>
+                                      <div className="flex items-center gap-1.5">
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            handleConfirmReminder({
+                                              reminderId: u.latest_reminder_id,
+                                              userId: u.id,
+                                              structureName: u.establishment_name || u.name,
+                                            })
+                                          }
+                                          className="text-[9.5px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded transition cursor-pointer"
+                                        >
+                                          ✓ Confirmer
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            handleCancelReminder({
+                                              reminderId: u.latest_reminder_id,
+                                              userId: u.id,
+                                            })
+                                          }
+                                          className="text-[9.5px] font-semibold text-slate-600 hover:text-slate-900 px-1.5 py-0.5 rounded cursor-pointer"
+                                        >
+                                          ✕ Annuler
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : u.latest_reminder_status === 'confirmed' || u.last_reminder_at ? (
+                                    <div className="space-y-0.5">
+                                      <span className="text-[10.5px] font-bold text-slate-800 block">
+                                        {new Date(u.last_reminder_at || Date.now()).toLocaleDateString('fr-FR', {
+                                          day: '2-digit',
+                                          month: 'short',
+                                          year: 'numeric',
+                                        })}
+                                      </span>
+                                      <span className="inline-flex items-center gap-1 text-[9.5px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                        <CheckCircle2 className="w-2.5 h-2.5" />
+                                        <span>Relancé</span>
+                                      </span>
+                                    </div>
+                                  ) : u.latest_reminder_status === 'cancelled' ? (
+                                    <span className="text-[10px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                                      Annulé
+                                    </span>
+                                  ) : inactive ? (
+                                    <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                      À relancer
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-slate-400">Non requis</span>
+                                  )}
+                                </td>
+
+                                <td className="py-3 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    {/* Bouton principal "Relancer" (ouvre directement WhatsApp avec modèle par défaut) */}
+                                    <button
+                                      type="button"
+                                      disabled={!phoneCheck.isValid}
+                                      onClick={() => handleDirectRelance(u)}
+                                      className={`min-h-[44px] inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer ${
+                                        phoneCheck.isValid
+                                          ? 'text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95'
+                                          : 'text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed opacity-60'
+                                      }`}
+                                      title={
+                                        phoneCheck.isValid
+                                          ? 'Ouvrir directement WhatsApp avec le modèle par défaut'
+                                          : 'Numéro invalide ou incomplet'
+                                      }
+                                      aria-label={
+                                        phoneCheck.isValid
+                                          ? `Relancer ${u.establishment_name || u.name} sur WhatsApp`
+                                          : 'Numéro invalide ou incomplet'
+                                      }
+                                    >
+                                      <MessageCircle className="w-3.5 h-3.5" />
+                                      <span>Relancer</span>
+                                    </button>
+
+                                    {/* Bouton discret "Modifier le message" (ouvre la modale de personnalisation) */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenRelanceModal(u)}
+                                      className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition cursor-pointer"
+                                      title="Choisir un autre modèle ou modifier le message avant d'ouvrir WhatsApp"
+                                      aria-label="Modifier le message"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+
+                                    {/* Statut utilisateur */}
+                                    <select
+                                      value={u.status}
+                                      onChange={(e) => handleUpdateUserStatus(u.id, e.target.value)}
+                                      className="text-[11px] font-semibold py-1.5 px-2 rounded-xl border border-slate-200 bg-white cursor-pointer"
+                                    >
+                                      <option value="active">Actif</option>
+                                      <option value="pending">En attente</option>
+                                      <option value="inactive">Inactif</option>
+                                    </select>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Mobile & Tablet Card View (< 768px) */}
+                    <div className="md:hidden space-y-3">
+                      {paginatedUsers.map((u) => {
+                        const inactive = isUserInactive(u);
+                        const phoneCheck = normalizeIvorianPhone(u.phone);
+                        const daysAgo =
+                          typeof u.days_since_last_order === 'number'
+                            ? u.days_since_last_order
+                            : u.last_order_at
+                            ? Math.floor((Date.now() - new Date(u.last_order_at).getTime()) / (1000 * 60 * 60 * 24))
+                            : null;
+
+                        return (
+                          <div
+                            key={u.id}
+                            className="p-4 rounded-2xl border border-slate-200 bg-white space-y-3 shadow-xs"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <p className="font-bold text-slate-900 text-sm">
+                                  {u.first_name || ''} {u.last_name || ''}
+                                </p>
+                                <p className="text-xs font-semibold text-slate-700">
+                                  {u.establishment_name || 'Sans structure'}
+                                </p>
+                                <p className="text-[11px] text-slate-400">{u.commune || 'Abidjan'}</p>
                               </div>
-                            </td>
-                          </tr>
+
+                              <div>
+                                {inactive ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                    Inactif
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    Actif
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100 text-xs space-y-1">
+                              <div className="flex items-center justify-between">
+                                <span className="text-slate-500">Téléphone :</span>
+                                {phoneCheck.isValid ? (
+                                  <span className="font-semibold text-slate-800">{phoneCheck.formatted}</span>
+                                ) : (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-rose-600 font-semibold">{u.phone || 'Non renseigné'}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenPhoneModal(u)}
+                                      className="text-rose-700 underline font-bold"
+                                    >
+                                      Corriger
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-slate-500">Dernière commande :</span>
+                                <span className="font-semibold text-slate-800">
+                                  {daysAgo !== null ? `Il y a ${daysAgo} jours` : 'Aucune'}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-slate-500">Dernière relance :</span>
+                                <span className="font-semibold text-slate-800">
+                                  {u.latest_reminder_status === 'opened'
+                                    ? 'Ouvert — à confirmer'
+                                    : u.latest_reminder_status === 'confirmed' || u.last_reminder_at
+                                    ? 'Relancé'
+                                    : inactive
+                                    ? 'À relancer'
+                                    : 'Non requis'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Mobile Actions (Buttons ≥ 44px) */}
+                            <div className="flex items-center gap-2 pt-1">
+                              <button
+                                type="button"
+                                disabled={!phoneCheck.isValid}
+                                onClick={() => handleDirectRelance(u)}
+                                className={`flex-1 min-h-[44px] inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer ${
+                                  phoneCheck.isValid
+                                    ? 'text-white bg-emerald-600 hover:bg-emerald-700'
+                                    : 'text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed opacity-60'
+                                }`}
+                                aria-label="Relancer sur WhatsApp"
+                              >
+                                <MessageCircle className="w-4 h-4" />
+                                <span>Relancer</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleOpenRelanceModal(u)}
+                                className="min-h-[44px] min-w-[44px] inline-flex items-center justify-center p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 cursor-pointer"
+                                aria-label="Modifier le message"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
                         );
                       })}
-                    </tbody>
-                  </table>
-                </div>
+                    </div>
+
+                    {/* Pagination */}
+                    {totalUserPages > 1 && (
+                      <div className="flex items-center justify-between pt-4 border-t border-slate-100 text-xs">
+                        <span className="text-slate-500">
+                          Affichage de {(userCurrentPage - 1) * userItemsPerPage + 1} à{' '}
+                          {Math.min(userCurrentPage * userItemsPerPage, filteredUsers.length)} sur{' '}
+                          {filteredUsers.length} comptes
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={userCurrentPage === 1}
+                            onClick={() => setUserCurrentPage((p) => Math.max(1, p - 1))}
+                            className="min-h-[40px] px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                          >
+                            Précédent
+                          </button>
+                          <span className="px-3 py-1.5 font-bold text-slate-800">
+                            {userCurrentPage} / {totalUserPages}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={userCurrentPage === totalUserPages}
+                            onClick={() => setUserCurrentPage((p) => Math.min(totalUserPages, p + 1))}
+                            className="min-h-[40px] px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                          >
+                            Suivant
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
 
-              {/* Real Audit Trail Table of Automated Relances */}
+              {/* Real Audit Trail Table of Manual WhatsApp Relances */}
               <div className="admin-card p-6">
                 <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
                   <div>
                     <h3 className="text-sm font-bold text-slate-900">
-                      Journal d'audit des Relances B2B (WhatsApp Business &amp; Email Pro)
+                      Journal de traçabilité des relances manuelles WhatsApp (wa.me)
                     </h3>
-                    <p className="text-xs text-slate-500">
-                      Historique certifié des messages de réapprovisionnement expédiés aux établissements
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Statuts stricts : « Ouvert — à confirmer », « Relancé » (validé par l'admin), « Annulé ». Aucun faux statut.
                     </p>
                   </div>
                   <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                    {relancesList.length} relance(s) tracée(s)
+                    {clientRemindersList.length} relance(s) tracée(s)
                   </span>
                 </div>
 
-                {relancesList.length === 0 ? (
-                  <p className="text-xs text-slate-400 italic py-4 text-center">
-                    Aucune relance envoyée pour le moment.
+                {clientRemindersList.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic py-6 text-center">
+                    Aucune relance effectuée pour le moment. Cliquez sur « Relancer » pour ouvrir une discussion client.
                   </p>
                 ) : (
                   <div className="overflow-x-auto">
@@ -1590,75 +2383,239 @@ export const Admin: React.FC = () => {
                       <thead>
                         <tr className="border-b border-slate-200 text-slate-400 uppercase text-[10px] tracking-wider">
                           <th className="pb-2.5 font-semibold">Date &amp; Heure</th>
-                          <th className="pb-2.5 font-semibold">Destinataire</th>
-                          <th className="pb-2.5 font-semibold">Motif Déclencheur</th>
-                          <th className="pb-2.5 font-semibold">Canal</th>
-                          <th className="pb-2.5 font-semibold">Statut</th>
-                          <th className="pb-2.5 font-semibold text-right">Lien direct</th>
+                          <th className="pb-2.5 font-semibold">Client / Établissement</th>
+                          <th className="pb-2.5 font-semibold">Modèle utilisé</th>
+                          <th className="pb-2.5 font-semibold">Statut réel</th>
+                          <th className="pb-2.5 font-semibold text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {relancesList.map((rel) => (
-                          <tr key={rel.id} className="hover:bg-slate-50 transition">
-                            <td className="py-2.5 text-slate-600 font-medium">
-                              {new Date(rel.sent_at).toLocaleString('fr-FR', {
-                                day: '2-digit',
-                                month: 'short',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </td>
-                            <td className="py-2.5">
-                              <p className="font-bold text-slate-900">{rel.establishmentName}</p>
-                              <p className="text-[10.5px] text-slate-500">{rel.userName} • {rel.recipientPhone}</p>
-                            </td>
-                            <td className="py-2.5 text-slate-700">
-                              <span className="text-[11px] bg-slate-100 px-2 py-0.5 rounded font-medium">
-                                {rel.triggerReason}
-                              </span>
-                            </td>
-                            <td className="py-2.5">
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                                WhatsApp &amp; Email
-                              </span>
-                            </td>
-                            <td className="py-2.5">
-                              {rel.status === 'sent' || rel.status === 'delivered' ? (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                                  <CheckCircle2 className="w-3 h-3" />
-                                  <span>{rel.status === 'delivered' ? 'Distribué' : 'Envoyé'}</span>
+                        {clientRemindersList.map((rem) => {
+                          const tmpl = reminderTemplates.find((t) => t.template_key === rem.template_key);
+                          const tmplTitle = tmpl?.title || rem.template_key;
+
+                          return (
+                            <tr key={rem.id} className="hover:bg-slate-50 transition">
+                              <td className="py-2.5 text-slate-600 font-medium">
+                                {new Date(rem.opened_at).toLocaleString('fr-FR', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </td>
+                              <td className="py-2.5">
+                                <p className="font-bold text-slate-900">{rem.establishment_name || 'Établissement'}</p>
+                                <p className="text-[10.5px] text-slate-500">
+                                  {[rem.first_name, rem.last_name].filter(Boolean).join(' ') || rem.name} • {rem.phone}
+                                </p>
+                              </td>
+                              <td className="py-2.5">
+                                <span className="text-[11px] font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                                  {tmplTitle}
                                 </span>
-                              ) : rel.status === 'failed' ? (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
-                                  <AlertTriangle className="w-3 h-3" />
-                                  <span>Échec API</span>
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                                  <Clock className="w-3 h-3" />
-                                  <span>En attente</span>
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-2.5 text-right">
-                              {rel.whatsappDirectUrl && (
-                                <a
-                                  href={rel.whatsappDirectUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition"
-                                >
-                                  <MessageCircle className="w-3 h-3" />
-                                  <span>Ouvrir WhatsApp</span>
-                                </a>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
+                              </td>
+                              <td className="py-2.5">
+                                {rem.status === 'confirmed' ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                    <CheckCircle2 className="w-3 h-3" />
+                                    <span>Relancé (confirmé)</span>
+                                  </span>
+                                ) : rem.status === 'opened' ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-300">
+                                    <Clock className="w-3 h-3 text-amber-600 animate-spin" />
+                                    <span>Ouvert — à confirmer</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
+                                    <XCircle className="w-3 h-3" />
+                                    <span>Annulé</span>
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2.5 text-right">
+                                {rem.status === 'opened' && (
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleConfirmReminder({
+                                          reminderId: rem.id,
+                                          userId: rem.user_id,
+                                          structureName: rem.establishment_name,
+                                        })
+                                      }
+                                      className="px-2.5 py-1 text-[10.5px] font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition cursor-pointer"
+                                    >
+                                      ✓ Confirmer
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleCancelReminder({
+                                          reminderId: rem.id,
+                                          userId: rem.user_id,
+                                        })
+                                      }
+                                      className="px-2 py-1 text-[10.5px] font-semibold rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-600 cursor-pointer"
+                                    >
+                                      ✕ Annuler
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* ================= PANEL: MODÈLES DE RELANCE WHATSAPP (TEXTES B2B) ================= */}
+          {activePanel === 'panel-templates' && (
+            <div id="panel-templates" className="panel active space-y-6">
+              <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">
+                    Modèles Officiels de Relance WhatsApp B2B
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
+                    Textes bruts <strong>sans emoji</strong> stockés côté serveur. Les variables{' '}
+                    <code className="text-blue-700 bg-blue-50 px-1 py-0.5 rounded font-mono text-[11px]">&#123;responsable&#125;</code>{' '}
+                    et{' '}
+                    <code className="text-blue-700 bg-blue-50 px-1 py-0.5 rounded font-mono text-[11px]">&#123;structure&#125;</code>{' '}
+                    sont automatiquement remplacées par les coordonnées réelles du client avant l'ouverture de WhatsApp.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleResetDefaultTemplates}
+                  className="min-h-[44px] px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-slate-900 transition flex items-center gap-1.5 shrink-0 self-start sm:self-auto cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Rétablir les modèles par défaut</span>
+                </button>
+              </div>
+
+              {/* Grille des 4 Modèles */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {reminderTemplates.map((tmpl, idx) => {
+                  const draftContent = templateDrafts[tmpl.template_key] ?? tmpl.content;
+                  const isModified = draftContent !== tmpl.content;
+                  const isSaving = savingTemplateKey === tmpl.template_key;
+                  const previewInterp = interpolateReminderMessage(draftContent, {
+                    first_name: 'Dr',
+                    last_name: 'Konan',
+                    establishment_name: 'Pharmacie de la Grâce',
+                  });
+
+                  return (
+                    <div
+                      key={tmpl.template_key}
+                      className="admin-card p-5 space-y-4 border border-slate-200 bg-white shadow-xs"
+                    >
+                      <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-xl bg-blue-50 text-[var(--primary)] flex items-center justify-center font-bold text-xs">
+                            {idx + 1}
+                          </div>
+                          <div>
+                            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                              <span>{tmpl.title}</span>
+                              {tmpl.is_default ? (
+                                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                  Modèle par défaut
+                                </span>
+                              ) : null}
+                            </h3>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              clé : {tmpl.template_key}
+                            </span>
+                          </div>
+                        </div>
+
+                        {tmpl.template_key === 'nouveautes' && (
+                          <span className="text-[10.5px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-300 flex items-center gap-1">
+                            <Sparkles className="w-3 h-3 text-amber-600" />
+                            <span>Contrôle requis</span>
+                          </span>
+                        )}
+                      </div>
+
+                      {tmpl.warning_note && (
+                        <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200 text-xs text-amber-900 flex items-start gap-2">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                          <p className="text-[11px] leading-relaxed">
+                            <strong>Consigne commerciale :</strong> {tmpl.warning_note}
+                          </p>
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="text-xs font-bold text-slate-700 block mb-1.5">
+                          Texte du message brut (modèle)
+                        </label>
+                        <textarea
+                          rows={4}
+                          value={draftContent}
+                          onChange={(e) =>
+                            setTemplateDrafts((prev) => ({
+                              ...prev,
+                              [tmpl.template_key]: e.target.value,
+                            }))
+                          }
+                          className="w-full p-3 text-xs rounded-xl border border-slate-200 bg-slate-50/50 font-sans leading-relaxed outline-none focus:border-[var(--primary)] focus:bg-white transition"
+                        />
+                        <div className="flex items-center justify-between mt-1 text-[11px] text-slate-400">
+                          <span>Variables : &#123;responsable&#125;, &#123;structure&#125;</span>
+                          <span className={draftContent.length > 900 ? 'text-amber-600 font-bold' : ''}>
+                            {draftContent.length} / ~1000 car.
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Aperçu en direct */}
+                      <div className="p-3 rounded-xl bg-emerald-50/40 border border-emerald-100 space-y-1">
+                        <p className="text-[10px] uppercase font-bold text-emerald-800 tracking-wider">
+                          Aperçu avec données client réelles :
+                        </p>
+                        <p className="text-xs text-slate-800 italic leading-relaxed">
+                          « {previewInterp} »
+                        </p>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                        {isModified && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setTemplateDrafts((prev) => ({
+                                ...prev,
+                                [tmpl.template_key]: tmpl.content,
+                              }))
+                            }
+                            className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-700 cursor-pointer"
+                          >
+                            Rétablir
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={!isModified || isSaving}
+                          onClick={() => handleSaveTemplate(tmpl.template_key, draftContent, tmpl.title)}
+                          className="min-h-[40px] px-4 py-2 rounded-xl text-xs font-bold text-white bg-[var(--primary)] hover:brightness-110 transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          <span>{isSaving ? 'Enregistrement…' : 'Enregistrer'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -2204,98 +3161,319 @@ export const Admin: React.FC = () => {
         </div>
       )}
 
-      {/* ══ MODALE DE RELANCE CLIENT B2B (WHATSAPP BUSINESS & PRO EMAIL) ══ */}
-      {isRelanceModalOpen && relanceUser && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
-        >
-          <div className="modal-box w-full max-w-[620px] bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col">
-            <div className="modal-header flex items-center justify-between p-6 border-b border-slate-100 bg-slate-50/70">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl flex items-center justify-center text-white bg-emerald-600 shadow-sm">
-                  <MessageCircle className="w-5 h-5" />
+      {/* ══ MODALE DE RELANCE WHATSAPP B2B (HONNÊTE SANS FAUX SUCCÈS) ══ */}
+      {isRelanceModalOpen && relanceUser && (() => {
+        const norm = normalizeIvorianPhone(relanceUser.phone);
+        const structureName = relanceUser.establishment_name || relanceUser.org || 'Établissement';
+        const contactName = [relanceUser.first_name, relanceUser.last_name].filter(Boolean).join(' ') || relanceUser.name || 'Responsable';
+
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="relance-modal-title"
+            className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
+          >
+            <div className="modal-box w-full max-w-[640px] bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+              {/* Header */}
+              <div className="modal-header flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/70 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl flex items-center justify-center text-white bg-emerald-600 shadow-sm">
+                    <MessageCircle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 id="relance-modal-title" className="text-base font-bold text-slate-900">
+                      Relancer {structureName}
+                    </h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Discussion WhatsApp privée • {norm.isValid ? norm.formatted : 'Numéro à vérifier'}
+                    </p>
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setIsRelanceModalOpen(false)}
+                  className="w-8 h-8 rounded-full flex items-center justify-center border border-slate-200 hover:bg-slate-100 text-slate-500 cursor-pointer"
+                  aria-label="Fermer la modale"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Corps défilable */}
+              <div className="p-5 space-y-4 overflow-y-auto">
+                {/* Récapitulatif Client */}
+                <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200 text-xs text-blue-900 space-y-1">
+                  <p>
+                    <strong>Responsable :</strong> {contactName} • <strong>Structure :</strong> {structureName}
+                  </p>
+                  {typeof relanceUser.days_since_last_order === 'number' && (
+                    <p className="text-rose-700 font-semibold">
+                      Dernière commande passée il y a {relanceUser.days_since_last_order} jours (&ge; 60 jours sans réassort).
+                    </p>
+                  )}
+                  {/* Alerte si relancé il y a moins de 7 jours */}
+                  {relanceUser.last_reminder_at && (() => {
+                    const diffDays = Math.floor((Date.now() - new Date(relanceUser.last_reminder_at).getTime()) / (1000 * 60 * 60 * 24));
+                    if (diffDays < REMINDER_COOLDOWN_DAYS) {
+                      return (
+                        <p className="text-amber-800 font-bold flex items-center gap-1 pt-1">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span>Ce client a déjà été relancé il y a {diffDays === 0 ? "moins d'un jour" : `${diffDays} jour(s)`}.</span>
+                        </p>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
+
+                {/* Sélecteur de Modèles (Lucide icons uniquement, zéro emoji) */}
                 <div>
-                  <h2 className="text-base font-bold text-slate-900">
-                    Relance B2B — {relanceUser.establishment_name || relanceUser.name}
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Canaux configurés : WhatsApp Business (+225 07 09 55 40 20) &amp; Email ({relanceUser.email})
+                  <label className="text-xs font-bold text-slate-700 block mb-2">
+                    Choisir un modèle de message
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {reminderTemplates.map((tmpl) => {
+                      const isSelected = selectedTemplateKey === tmpl.template_key;
+                      const getIcon = () => {
+                        switch (tmpl.template_key) {
+                          case 'reprise_contact':
+                            return <RotateCcw className="w-3.5 h-3.5" />;
+                          case 'reappro':
+                            return <Boxes className="w-3.5 h-3.5" />;
+                          case 'espace_client':
+                            return <UserCheck className="w-3.5 h-3.5" />;
+                          case 'nouveautes':
+                            return <Sparkles className="w-3.5 h-3.5" />;
+                          default:
+                            return <MessageSquare className="w-3.5 h-3.5" />;
+                        }
+                      };
+
+                      return (
+                        <button
+                          key={tmpl.template_key}
+                          type="button"
+                          onClick={() => handleSelectModalTemplate(tmpl.template_key)}
+                          className={`p-2.5 rounded-xl border text-left text-xs transition cursor-pointer flex items-center gap-2 ${
+                            isSelected
+                              ? 'border-emerald-600 bg-emerald-50/70 text-emerald-950 font-bold shadow-xs'
+                              : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-medium'
+                          }`}
+                        >
+                          <span className={isSelected ? 'text-emerald-700' : 'text-slate-400'}>
+                            {getIcon()}
+                          </span>
+                          <span className="truncate">{tmpl.title}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Avertissement déontologique pour le modèle 4 */}
+                {selectedTemplateKey === 'nouveautes' && (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <p className="text-[11.5px] leading-relaxed">
+                      <strong>Rappel déontologique :</strong> Ce modèle ne doit être utilisé que si de nouvelles références réelles ont été récemment ajoutées au catalogue de CYM Pharma.
+                    </p>
+                  </div>
+                )}
+
+                {/* Champ texte modifiable */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-bold text-slate-700">
+                      Texte du message (variables déjà personnalisées)
+                    </label>
+                    <span
+                      className={`text-[11px] font-mono ${
+                        relanceCustomText.length > 900 ? 'text-amber-600 font-bold' : 'text-slate-400'
+                      }`}
+                    >
+                      {relanceCustomText.length} / ~1000 caractères
+                    </span>
+                  </div>
+                  <textarea
+                    rows={4}
+                    value={relanceCustomText}
+                    onChange={(e) => setRelanceCustomText(e.target.value)}
+                    className="w-full p-3 text-xs rounded-xl border border-slate-200 bg-white font-sans leading-relaxed outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 transition"
+                  />
+                </div>
+
+                {/* Aperçu bulle WhatsApp */}
+                <div className="p-3.5 rounded-2xl bg-emerald-50/50 border border-emerald-100 space-y-1.5">
+                  <p className="text-[10px] uppercase font-bold text-emerald-800 tracking-wider">
+                    Aperçu dans la discussion WhatsApp :
                   </p>
+                  <div className="bg-[#DCF8C6] p-3 rounded-xl rounded-tr-none text-slate-800 text-xs leading-relaxed shadow-xs max-w-[90%] ml-auto border border-emerald-200">
+                    <p className="whitespace-pre-wrap">{relanceCustomText}</p>
+                    <div className="flex items-center justify-end gap-1 mt-1 text-[10px] text-slate-500">
+                      <span>{new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
+                      <CheckCheck className="w-3 h-3 text-blue-500" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Canaux de repli */}
+                <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="text-[11px] text-slate-500">
+                    En cas de repli si WhatsApp est indisponible :
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {relanceUser.phone && (
+                      <a
+                        href={`tel:${relanceUser.phone}`}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold transition"
+                      >
+                        <Phone className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Appeler ({relanceUser.phone})</span>
+                      </a>
+                    )}
+                    {relanceUser.email && (
+                      <a
+                        href={`mailto:${relanceUser.email}`}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-semibold transition"
+                      >
+                        <Mail className="w-3.5 h-3.5 text-slate-500" />
+                        <span>E-mail direct</span>
+                      </a>
+                    )}
+                  </div>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsRelanceModalOpen(false)}
-                className="w-8 h-8 rounded-full flex items-center justify-center border border-slate-200 hover:bg-slate-100 text-slate-500 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
 
-            <div className="p-6 space-y-4">
-              <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200 text-xs text-blue-900 space-y-1">
-                <p><strong>Destinataire :</strong> {relanceUser.first_name || ''} {relanceUser.last_name || ''} ({relanceUser.phone || 'Standard direct'})</p>
-                <p><strong>Structure :</strong> {relanceUser.establishment_name || 'Établissement'} • {relanceUser.commune || 'Abidjan'}</p>
-                {typeof relanceUser.days_since_last_order === 'number' && (
-                  <p className="text-rose-700 font-semibold">
-                    Dernière commande passée il y a {relanceUser.days_since_last_order} jours (&gt; 60 jours sans réassort).
-                  </p>
-                )}
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  Objet du message
-                </label>
-                <input
-                  type="text"
-                  value={relanceSubject}
-                  onChange={(e) => setRelanceSubject(e.target.value)}
-                  className="w-full px-3 py-2 text-xs font-medium rounded-xl border border-slate-200 bg-white outline-none focus:border-[var(--primary)]"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  Message personnalisé d'invitation à commander
-                </label>
-                <textarea
-                  rows={8}
-                  value={relanceMessage}
-                  onChange={(e) => setRelanceMessage(e.target.value)}
-                  className="w-full p-3 text-xs rounded-xl border border-slate-200 bg-slate-50 font-sans leading-relaxed outline-none focus:border-[var(--primary)] focus:bg-white"
-                />
-              </div>
-
-              <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                <span className="text-[11px] text-slate-400">
-                  L'envoi sera consigné dans le journal d'audit et la date sera actualisée.
+              {/* Footer */}
+              <div className="p-4 border-t border-slate-100 bg-slate-50/70 flex items-center justify-between shrink-0">
+                <span className="text-[11px] text-slate-500 italic">
+                  Ouvre WhatsApp dans un nouvel onglet sans envoi automatique.
                 </span>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setIsRelanceModalOpen(false)}
-                    className="px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 hover:bg-slate-50 transition cursor-pointer"
+                    className="min-h-[44px] px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 hover:bg-white text-slate-700 transition cursor-pointer"
                   >
                     Annuler
                   </button>
                   <button
                     type="button"
-                    onClick={handleSendRelance}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition cursor-pointer shadow-sm"
+                    onClick={handleModalOpenWhatsApp}
+                    className="min-h-[44px] px-5 py-2 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition flex items-center gap-2 cursor-pointer shadow-sm"
                   >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>Envoyer la relance</span>
+                    <MessageCircle className="w-4 h-4" />
+                    <span>Ouvrir WhatsApp</span>
                   </button>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
+
+      {/* ══ MODALE DE CORRECTION DU TÉLÉPHONE CLIENT ══ */}
+      {isPhoneModalOpen && editingPhoneUser && (() => {
+        const norm = normalizeIvorianPhone(phoneInput);
+        const structure = editingPhoneUser.establishment_name || editingPhoneUser.name || 'Client';
+
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="phone-modal-title"
+            className="fixed inset-0 z-[230] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
+          >
+            <div className="modal-box w-full max-w-[480px] bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+              <div className="modal-header flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/70">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center text-[var(--primary)] bg-blue-50">
+                    <Phone className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 id="phone-modal-title" className="text-sm font-bold text-slate-900">
+                      Corriger le téléphone
+                    </h2>
+                    <p className="text-xs text-slate-500 truncate max-w-[280px]">
+                      {structure}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsPhoneModalOpen(false)}
+                  className="w-8 h-8 rounded-full flex items-center justify-center border border-slate-200 hover:bg-slate-100 text-slate-500 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1.5">
+                    Numéro de téléphone Côte d'Ivoire (10 chiffres)
+                  </label>
+                  <input
+                    type="tel"
+                    value={phoneInput}
+                    onChange={(e) => setPhoneInput(e.target.value)}
+                    placeholder="ex : +225 07 07 07 97 46"
+                    className="w-full px-3.5 py-2.5 text-xs font-mono font-medium rounded-xl border border-slate-200 bg-white outline-none focus:border-[var(--primary)] focus:ring-1 focus:ring-[var(--primary)] transition"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Accepte les formats +225, 00225, 0707079746, espaces et tirets.
+                  </p>
+                </div>
+
+                {/* Résultat de la validation en direct */}
+                {phoneInput.trim() ? (
+                  norm.isValid ? (
+                    <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <div>
+                        <p className="font-bold">Numéro valide pour WhatsApp</p>
+                        <p className="font-mono text-[11px] text-emerald-700">{norm.formatted}</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      <div className="text-[11.5px] leading-relaxed">
+                        <p className="font-bold">{norm.error || 'Numéro invalide'}</p>
+                        {phoneInput.trim().replace(/[\s\-\.\(\)\/+]/g, '').replace(/^(00)?225/, '').length === 8 && (
+                          <p className="mt-1 text-rose-700">
+                            La Côte d'Ivoire est passée au plan national à 10 chiffres en 2021. Le préfixe opérateur (01, 05 ou 07) ne pouvant pas être deviné automatiquement, veuillez saisir les 10 chiffres complets.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )
+                ) : null}
+              </div>
+
+              <div className="p-4 border-t border-slate-100 bg-slate-50/70 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPhoneModalOpen(false)}
+                  className="min-h-[44px] px-4 py-2 rounded-xl text-xs font-semibold border border-slate-200 hover:bg-white text-slate-700 transition cursor-pointer"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  disabled={!norm.isValid || phoneSaving}
+                  onClick={handleSavePhone}
+                  className="min-h-[44px] px-5 py-2 rounded-xl text-xs font-bold text-white bg-[var(--primary)] hover:brightness-110 transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer shadow-sm"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{phoneSaving ? 'Enregistrement…' : 'Enregistrer le numéro'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

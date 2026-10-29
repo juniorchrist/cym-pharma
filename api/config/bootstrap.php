@@ -36,22 +36,25 @@ $cors = $config['cors'] ?? [];
 $allowedOrigins = array_map('trim', explode(',', $cors['allowed_origins'] ?? ''));
 $requestOrigin  = $_SERVER['HTTP_ORIGIN'] ?? '';
 
-if (in_array($requestOrigin, $allowedOrigins, true) || in_array('*', $allowedOrigins, true)) {
-    header('Access-Control-Allow-Origin: ' . $requestOrigin);
-}
-header('Access-Control-Allow-Methods: ' . ($cors['allowed_methods'] ?? 'GET,POST,PUT,PATCH,DELETE,OPTIONS'));
-header('Access-Control-Allow-Headers: ' . ($cors['allowed_headers'] ?? 'Content-Type,Authorization'));
-header('Access-Control-Allow-Credentials: true');
+if (!headers_sent()) {
+    if (in_array($requestOrigin, $allowedOrigins, true) || in_array('*', $allowedOrigins, true)) {
+        header('Access-Control-Allow-Origin: ' . $requestOrigin);
+    }
+    header('Access-Control-Allow-Methods: ' . ($cors['allowed_methods'] ?? 'GET,POST,PUT,PATCH,DELETE,OPTIONS'));
+    header('Access-Control-Allow-Headers: ' . ($cors['allowed_headers'] ?? 'Content-Type,Authorization'));
+    header('Access-Control-Allow-Credentials: true');
 
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(204);
-    exit;
-}
+    if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
+        http_response_code(204);
+        exit;
+    }
 
-header('Content-Type: application/json; charset=utf-8');
+    header('Content-Type: application/json; charset=utf-8');
+}
 
 // ── Connexion PDO ─────────────────────────────────────────────────────────
 $db = $config['db'] ?? [];
+$pdo = null;
 try {
     $dsn = sprintf(
         'mysql:host=%s;port=%d;dbname=%s;charset=%s',
@@ -66,12 +69,14 @@ try {
         PDO::ATTR_EMULATE_PREPARES   => false,
     ]);
 } catch (PDOException $e) {
-    http_response_code(503);
-    $msg = !empty($config['debug'])
-        ? 'Connexion base de données impossible : ' . $e->getMessage()
-        : 'Service temporairement indisponible.';
-    echo json_encode(['success' => false, 'message' => $msg]);
-    exit;
+    if (php_sapi_name() !== 'cli') {
+        http_response_code(503);
+        $msg = !empty($config['debug'])
+            ? 'Connexion base de données impossible : ' . $e->getMessage()
+            : 'Service temporairement indisponible.';
+        echo json_encode(['success' => false, 'message' => $msg]);
+        exit;
+    }
 }
 
 // ── Raccourcis de configuration ───────────────────────────────────────────
@@ -153,4 +158,16 @@ function require_auth(string $secret): array {
         json_error('Authentification requise.', 401);
     }
     return $payload;
+}
+
+/**
+ * Génère un jeton JWT HS256 valide.
+ */
+function create_jwt(array $payload, string $secret): string {
+    $header = ['typ' => 'JWT', 'alg' => 'HS256'];
+    $headerB64 = rtrim(strtr(base64_encode((string)json_encode($header)), '+/', '-_'), '=');
+    $payloadB64 = rtrim(strtr(base64_encode((string)json_encode($payload)), '+/', '-_'), '=');
+    $signature = hash_hmac('sha256', "$headerB64.$payloadB64", $secret, true);
+    $sigB64 = rtrim(strtr(base64_encode($signature), '+/', '-_'), '=');
+    return "$headerB64.$payloadB64.$sigB64";
 }

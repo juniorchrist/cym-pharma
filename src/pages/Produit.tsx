@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronRight,
   ShieldCheck,
@@ -8,12 +8,15 @@ import {
   Plus,
   Truck,
   FileText,
+  LogIn,
 } from 'lucide-react';
 import { PageShell } from '../components/layout/PageShell';
 import { ProductImageFallback } from '../components/product/ProductImageFallback';
 import { LoadingState } from '../components/ui/LoadingState';
 import { ErrorState } from '../components/ui/ErrorState';
 import { useCart } from '../context/CartContext';
+import { useAuth } from '../context/AuthContext';
+import { storage } from '../utils/storage';
 import { getProductById, ALL_PRODUCTS } from '../data/catalog';
 import { Product } from '../types';
 
@@ -21,6 +24,8 @@ export const Produit: React.FC = () => {
   const [searchParams] = useSearchParams();
   const idParam = searchParams.get('id') || searchParams.get('p') || 'prod-001';
   const { add, openDrawer } = useCart();
+  const { isAuthenticated } = useAuth();
+  const navigate = useNavigate();
 
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,6 +40,11 @@ export const Produit: React.FC = () => {
 
   const handleAddToCart = () => {
     if (!product) return;
+    if (!isAuthenticated) {
+      storage.setRedirectAfterLogin(window.location.pathname + window.location.search);
+      navigate('/connexion');
+      return;
+    }
     add(
       product.id,
       product.name,
@@ -194,8 +204,17 @@ export const Produit: React.FC = () => {
                     onClick={handleAddToCart}
                     className="btn-primary flex-1 flex items-center justify-center gap-2 py-3"
                   >
-                    <ShoppingCart className="w-4 h-4" strokeWidth={2} />
-                    <span>Ajouter au bon de commande</span>
+                    {isAuthenticated ? (
+                      <>
+                        <ShoppingCart className="w-4 h-4" strokeWidth={2} />
+                        <span>Ajouter au bon de commande</span>
+                      </>
+                    ) : (
+                      <>
+                        <LogIn className="w-4 h-4" strokeWidth={2} />
+                        <span>Se connecter pour commander</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>

@@ -5,6 +5,7 @@ node_modules/
 
 # Production build
 dist/
+dist-server/
 build/
 out/
 
@@ -73,4 +74,3 @@ Thumbs.db
 
 # Code mort — Node.js backend non déployé
 backend/
-server.js

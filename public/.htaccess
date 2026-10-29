@@ -3,7 +3,9 @@
 # Hébergement mutualisé : o2switch (production) / InfinityFree (test)
 # =====================================================================
 
-Options -Indexes
+<IfModule mod_autoindex.c>
+  Options -Indexes
+</IfModule>
 ServerSignature Off
 AddDefaultCharset UTF-8
 

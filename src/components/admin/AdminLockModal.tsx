@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, X } from 'lucide-react';
+import { Lock, X, Mail, KeyRound, ShieldAlert } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 
@@ -15,47 +15,63 @@ export const AdminLockModal: React.FC<AdminLockModalProps> = ({
   onClose,
   onSuccess,
 }) => {
+  const { user, isAdmin, checkAdminPassword } = useAuth();
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const { checkAdminPassword } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleDirectAccess = () => {
+    onClose();
+    if (onSuccess) {
+      onSuccess();
+    } else {
+      navigate('/admin');
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!password) {
-      setError('Veuillez saisir le mot de passe administrateur.');
+    setError(null);
+
+    const targetEmail = user?.role === 'admin' ? (user.email || email) : email;
+
+    if (!targetEmail || !password) {
+      setError('Veuillez renseigner votre email et mot de passe administrateur.');
       return;
     }
 
     setLoading(true);
-    const isValid = checkAdminPassword(password);
+    try {
+      const isValid = await checkAdminPassword(targetEmail, password);
 
-    if (isValid) {
-      setError(null);
-      setPassword('');
-      setLoading(false);
-      onClose();
-      showToast('Accès administrateur déverrouillé', 'success');
+      if (isValid) {
+        setError(null);
+        setPassword('');
+        setEmail('');
+        setLoading(false);
+        onClose();
+        showToast('Accès administrateur authentifié avec succès', 'success');
 
-      if (onSuccess) {
-        onSuccess();
-        // Si onSuccess ne gère pas la navigation, rediriger quand même
-        // (cas du footer où aucun onSuccess n'est passé → else branch ci-dessous)
+        if (onSuccess) {
+          onSuccess();
+        } else {
+          setTimeout(() => {
+            navigate('/admin');
+          }, 50);
+        }
       } else {
-        // Laisser React propager les mises à jour de state (rôle élevé)
-        // avant de déclencher la navigation vers /admin
-        setTimeout(() => {
-          navigate('/admin');
-        }, 50);
+        setLoading(false);
+        setError('Identifiants administrateur incorrects ou privilèges insuffisants.');
+        setPassword('');
       }
-    } else {
+    } catch (err: any) {
       setLoading(false);
-      setError('Mot de passe administrateur incorrect.');
-      setPassword('');
+      setError(err?.message || 'Erreur lors de la validation des droits administrateur.');
     }
   };
 
@@ -64,7 +80,7 @@ export const AdminLockModal: React.FC<AdminLockModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="admin-modal-title"
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-200"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm transition-opacity duration-200"
     >
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl p-7 transition-all duration-200">
         <div className="flex items-center justify-between mb-6">
@@ -74,9 +90,9 @@ export const AdminLockModal: React.FC<AdminLockModalProps> = ({
             </div>
             <div>
               <h3 id="admin-modal-title" className="text-base font-bold text-slate-900">
-                Espace Admin
+                Espace Direction & Gestion
               </h3>
-              <p className="text-xs text-slate-400">Accès réservé au propriétaire</p>
+              <p className="text-xs text-slate-400">Authentification sécurisée CYM Pharma</p>
             </div>
           </div>
           <button
@@ -89,43 +105,90 @@ export const AdminLockModal: React.FC<AdminLockModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label
-              htmlFor="admin-modal-pwd"
-              className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5"
-            >
-              Mot de passe
-            </label>
-            <input
-              id="admin-modal-pwd"
-              type="password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoFocus
-              disabled={loading}
-              className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none focus:border-[var(--primary)] focus:ring-2 focus:ring-[rgba(21,94,149,0.12)] transition disabled:opacity-60"
-            />
-          </div>
-
-          {error && (
-            <div
-              role="alert"
-              className="rounded-xl p-3 text-xs font-semibold text-center bg-red-50 text-red-600 border border-red-200"
-            >
-              {error}
+        {isAdmin ? (
+          <div className="space-y-4">
+            <div className="rounded-xl p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs">
+              <p className="font-semibold">Session administrateur active</p>
+              <p className="mt-0.5 text-emerald-700 font-mono text-[11px] truncate">{user?.email}</p>
             </div>
-          )}
+            <button
+              type="button"
+              onClick={handleDirectAccess}
+              className="btn-primary w-full py-3"
+            >
+              Accéder au tableau d'administration
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {user && user.role !== 'admin' && (
+              <div className="flex items-start gap-2 rounded-xl p-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-xs mb-2">
+                <ShieldAlert className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
+                <span>Connecté en tant que client. Saisissez les identifiants administrateur.</span>
+              </div>
+            )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="btn-primary w-full py-3 disabled:opacity-60"
-          >
-            {loading ? 'Vérification…' : "Accéder à l'administration"}
-          </button>
-        </form>
+            <div>
+              <label
+                htmlFor="admin-modal-email"
+                className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5"
+              >
+                Email administrateur
+              </label>
+              <div className="relative">
+                <input
+                  id="admin-modal-email"
+                  type="email"
+                  placeholder="direction@cympharma.ci"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoFocus
+                  disabled={loading}
+                  className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 pl-10 pr-4 py-2.5 text-sm text-slate-900 outline-none focus:border-[var(--primary)] focus:ring-2 focus:ring-[rgba(21,94,149,0.12)] transition disabled:opacity-60"
+                />
+                <Mail className="h-4 w-4 text-slate-400 absolute left-3.5 top-3" />
+              </div>
+            </div>
+
+            <div>
+              <label
+                htmlFor="admin-modal-pwd"
+                className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5"
+              >
+                Mot de passe
+              </label>
+              <div className="relative">
+                <input
+                  id="admin-modal-pwd"
+                  type="password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={loading}
+                  className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 pl-10 pr-4 py-2.5 text-sm text-slate-900 outline-none focus:border-[var(--primary)] focus:ring-2 focus:ring-[rgba(21,94,149,0.12)] transition disabled:opacity-60"
+                />
+                <KeyRound className="h-4 w-4 text-slate-400 absolute left-3.5 top-3" />
+              </div>
+            </div>
+
+            {error && (
+              <div
+                role="alert"
+                className="rounded-xl p-3 text-xs font-semibold text-center bg-red-50 text-red-600 border border-red-200"
+              >
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="btn-primary w-full py-3 disabled:opacity-60"
+            >
+              {loading ? 'Authentification…' : "Connexion Administrateur"}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );

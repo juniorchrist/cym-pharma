@@ -47,9 +47,9 @@ SELECT
   p.relance_count,
   EXTRACT(DAY FROM NOW() - p.last_order_at)::INTEGER  AS days_since_last_order,
   COUNT(o.id)                                          AS total_orders,
-  COALESCE(SUM(o.total_amount), 0)                     AS total_spent
+  COALESCE(SUM(o.total), 0)                            AS total_spent
 FROM public.profiles p
-LEFT JOIN public.orders o ON o.user_id = p.id::text
+LEFT JOIN public.orders o ON o.user_id = p.id
 WHERE
   p.role = 'client'
   AND (

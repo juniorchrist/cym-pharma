@@ -1,6 +1,10 @@
 -- =====================================================================
--- CYM PHARMA — SCHÉMA MySQL/MariaDB COMPLET
--- database/schema.sql
+-- FICHIER DÉPRÉCIÉ — NE PLUS UTILISER
+-- database/schema.sql  →  remplacé par  database/mysql/schema.sql
+-- =====================================================================
+-- Ce fichier est conservé pour référence historique uniquement.
+-- Source de vérité MySQL : database/mysql/schema.sql  (v2.0)
+-- Source de vérité PostgreSQL : database/postgres/schema.sql  (v2.0)
 -- =====================================================================
 -- Ce fichier définit UNIQUEMENT la structure (DDL).
 -- Les données d'initialisation sont dans database/seeds/admin.sql.
@@ -30,6 +34,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `email_verified_at`     DATETIME        DEFAULT NULL,
   `last_login_at`         DATETIME        DEFAULT NULL,
   `last_order_at`         DATETIME        DEFAULT NULL,
+  `last_reminder_at`      DATETIME        DEFAULT NULL,
   `failed_login_attempts` TINYINT(3)      NOT NULL DEFAULT 0,
   `locked_until`          DATETIME        DEFAULT NULL,
   `created_at`            DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -279,6 +284,38 @@ CREATE TABLE IF NOT EXISTS `period_items` (
   FOREIGN KEY (`period_id`) REFERENCES `inventory_periods`(`id`) ON DELETE CASCADE,
   FOREIGN KEY (`item_id`)   REFERENCES `inventory_items`(`id`) ON DELETE CASCADE,
   UNIQUE KEY `uq_pi_period_item` (`period_id`, `item_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- 10. RELANCES CLIENTS & MODÈLES WHATSAPP
+-- ─────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS `client_reminders` (
+  `id`           INT UNSIGNED    NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `user_id`      VARCHAR(64)     NOT NULL,
+  `channel`      VARCHAR(32)     NOT NULL DEFAULT 'whatsapp_manuel',
+  `template_key` VARCHAR(64)     NOT NULL,
+  `opened_by`    VARCHAR(64)     NOT NULL,
+  `opened_at`    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `confirmed_at` DATETIME        DEFAULT NULL,
+  `status`       ENUM('opened', 'confirmed', 'cancelled') NOT NULL DEFAULT 'opened',
+  `created_at`   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_cr_user_id`    (`user_id`),
+  INDEX `idx_cr_status`     (`status`),
+  INDEX `idx_cr_opened_at`  (`opened_at`),
+  CONSTRAINT `fk_cr_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `reminder_templates` (
+  `id`           INT UNSIGNED    NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `template_key` VARCHAR(64)     NOT NULL UNIQUE,
+  `title`        VARCHAR(191)    NOT NULL,
+  `content`      TEXT            NOT NULL,
+  `is_default`   TINYINT(1)      NOT NULL DEFAULT 0,
+  `sort_order`   INT             NOT NULL DEFAULT 0,
+  `created_at`   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`   DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_rt_key` (`template_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

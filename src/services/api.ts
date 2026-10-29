@@ -21,6 +21,8 @@ import {
   RegisterPayload,
   User,
   RelanceLog,
+  ClientReminder,
+  ReminderTemplate,
 } from '../types';
 import { storage } from '../utils/storage';
 import { API_BASE_URL, getApiBaseUrl } from '../config/api';
@@ -318,55 +320,45 @@ export const Orders = {
     if (isSupabaseConfigured() && supabase) {
       try {
         const currentUser = storage.getUser();
-        const orderNumber = 'CMD-' + new Date().getFullYear() + '-' + Math.floor(1000 + Math.random() * 9000);
-        const estName = payload.establishment_name || (payload as any).establishmentName || '';
-        const shipAddress = payload.shipping_address || payload.shippingAddress?.street || '';
-        const shipCity = payload.shipping_city || payload.shippingAddress?.city || 'Abidjan';
-        const shipNotes = payload.notes || payload.shippingAddress?.notes || '';
 
-        const { data: orderData, error: orderErr } = await supabase
-          .from('orders')
-          .insert({
-            order_number: orderNumber,
-            user_id: currentUser?.id || null,
-            establishment_name: estName,
-            shipping_address: shipAddress,
-            shipping_city: shipCity,
-            shipping_notes: shipNotes,
-            notes: shipNotes,
-            status: 'En attente de devis',
-          })
-          .select()
-          .single();
-
-        if (orderErr) {
-          return { success: false, message: orderErr.message };
+        if (!payload.items || payload.items.length === 0) {
+          return { success: false, message: 'La commande doit comporter au moins un article.' };
         }
 
-        if (payload.items && payload.items.length > 0) {
-          const itemsToInsert = payload.items.map((it) => ({
-            order_id: orderData.id,
-            product_id: it.productId ? String(it.productId) : null,
-            reference: it.reference || null,
-            name: it.name || 'Produit',
-            unit: it.unit || 'Unité',
-            conditionnement: it.conditionnement || null,
-            quantity: it.quantity || 1,
-            unit_price: 0,
-            line_total: 0,
-          }));
-
-          await supabase.from('order_items').insert(itemsToInsert);
-        }
-
-        const completeOrder: Order = {
-          ...orderData,
-          items: (payload.items || []) as any,
+        const orderData = {
+          user_id: currentUser?.id || null,
+          establishment_name: payload.establishment_name || (payload as any).establishmentName || '',
+          shipping_address: payload.shipping_address || payload.shippingAddress?.street || '',
+          shipping_city: payload.shipping_city || payload.shippingAddress?.city || 'Abidjan',
+          notes: payload.notes || payload.shippingAddress?.notes || '',
         };
 
-        return { success: true, data: { order: completeOrder } };
+        const itemsData = payload.items.map((it) => ({
+          productId: it.productId ? String(it.productId) : null,
+          reference: it.reference || null,
+          name: it.name || 'Dispositif médical',
+          unit: it.unit || 'Unité',
+          conditionnement: it.conditionnement || null,
+          quantity: it.quantity || 1,
+        }));
+
+        // Appel RPC atomique : commande + lignes + historique dans 1 seule transaction ACID
+        const { data: rpcResult, error: rpcError } = await supabase.rpc('create_order_atomic', {
+          p_order_data: orderData,
+          p_items: itemsData,
+        });
+
+        if (rpcError) {
+          return { success: false, message: rpcError.message || 'Erreur lors de la création de la commande.' };
+        }
+
+        if (!rpcResult || !rpcResult.order) {
+          return { success: false, message: 'La commande n\'a pas pu être enregistrée.' };
+        }
+
+        return { success: true, data: { order: rpcResult.order as Order } };
       } catch (err: any) {
-        return { success: false, message: err?.message || 'Erreur lors de la création de la commande' };
+        return { success: false, message: err?.message || 'Erreur lors de la création de la commande.' };
       }
     }
 
@@ -375,6 +367,7 @@ export const Orders = {
       body: JSON.stringify(payload),
     });
   },
+
 
   async list(params: Record<string, string | number> = {}): Promise<ApiResponse<{ orders: Order[] }>> {
     if (isSupabaseConfigured() && supabase) {
@@ -537,11 +530,35 @@ export const Admin = {
   },
 
   async products(params: Record<string, string | number> = {}): Promise<ApiResponse<{ products: Product[]; total: number }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        let query = supabase.from('products').select('*', { count: 'exact' });
+        if (params.category) query = query.eq('category', String(params.category));
+        if (params.search) query = query.ilike('name', `%${params.search}%`);
+        query = query.order('name');
+        const { data, count, error } = await query;
+        if (!error && data) {
+          return { success: true, data: { products: data as unknown as Product[], total: count || data.length } };
+        }
+      } catch (err) {
+        console.warn('Supabase products fallback to HTTP:', err);
+      }
+    }
     const query = new URLSearchParams(params as Record<string, string>).toString();
     return request<{ products: Product[]; total: number }>(`/admin/products${query ? `?${query}` : ''}`);
   },
 
   async createProduct(product: Partial<Product>): Promise<ApiResponse<{ product: Product }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase.from('products').insert(product).select().single();
+        if (!error && data) {
+          return { success: true, data: { product: data as unknown as Product } };
+        }
+      } catch (err) {
+        console.warn('Supabase createProduct fallback to HTTP:', err);
+      }
+    }
     return request<{ product: Product }>('/admin/products', {
       method: 'POST',
       body: JSON.stringify(product),
@@ -549,6 +566,16 @@ export const Admin = {
   },
 
   async updateProduct(id: string | number, product: Partial<Product>): Promise<ApiResponse<{ product: Product }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase.from('products').update(product).eq('id', String(id)).select().single();
+        if (!error && data) {
+          return { success: true, data: { product: data as unknown as Product } };
+        }
+      } catch (err) {
+        console.warn('Supabase updateProduct fallback to HTTP:', err);
+      }
+    }
     return request<{ product: Product }>(`/admin/products/${id}`, {
       method: 'PUT',
       body: JSON.stringify(product),
@@ -556,20 +583,258 @@ export const Admin = {
   },
 
   async deleteProduct(id: string | number): Promise<ApiResponse<void>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { error } = await supabase.from('products').delete().eq('id', String(id));
+        if (!error) return { success: true };
+      } catch (err) {
+        console.warn('Supabase deleteProduct fallback to HTTP:', err);
+      }
+    }
     return request<void>(`/admin/products/${id}`, {
       method: 'DELETE',
     });
   },
 
   async users(params: Record<string, string | number> = {}): Promise<ApiResponse<{ users: User[] }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*, client_reminders(id, status, opened_at, template_key)')
+          .order('created_at', { ascending: false });
+        if (!error && data) {
+          const INACTIVITY_DAYS = 60;
+          const mapped: User[] = data.map((p: any) => {
+            const reminders = Array.isArray(p.client_reminders) ? p.client_reminders : [];
+            const latestRem = [...reminders].sort(
+              (a: any, b: any) => new Date(b.opened_at).getTime() - new Date(a.opened_at).getTime()
+            )[0];
+
+            let daysSince: number | undefined = undefined;
+            if (p.last_order_at) {
+              daysSince = Math.floor((Date.now() - new Date(p.last_order_at).getTime()) / (1000 * 60 * 60 * 24));
+            } else if (p.created_at) {
+              daysSince = Math.floor((Date.now() - new Date(p.created_at).getTime()) / (1000 * 60 * 60 * 24));
+            }
+            const isInactive = p.status === 'inactive' || (typeof daysSince === 'number' && daysSince >= INACTIVITY_DAYS);
+
+            return {
+              id: p.id,
+              name: p.name || [p.first_name, p.last_name].filter(Boolean).join(' ') || p.email,
+              first_name: p.first_name,
+              last_name: p.last_name,
+              email: p.email,
+              phone: p.phone,
+              org: p.org || p.establishment_name,
+              establishment_name: p.establishment_name,
+              establishment_type: p.establishment_type,
+              commune: p.commune,
+              address: p.address,
+              role: p.role,
+              status: isInactive ? 'inactive' : p.status,
+              created_at: p.created_at,
+              last_order_at: p.last_order_at,
+              last_reminder_at: p.last_reminder_at,
+              latest_reminder_status: latestRem?.status,
+              latest_reminder_opened_at: latestRem?.opened_at,
+              latest_reminder_id: latestRem?.id,
+              days_since_last_order: daysSince,
+              is_server_inactive: isInactive,
+            } as User;
+          });
+          return { success: true, data: { users: mapped } };
+        }
+      } catch (err) {
+        console.warn('Supabase users fallback to HTTP:', err);
+      }
+    }
     const query = new URLSearchParams(params as Record<string, string>).toString();
     return request<{ users: User[] }>(`/admin/users${query ? `?${query}` : ''}`);
   },
 
   async updateUserStatus(id: string | number, status: string): Promise<ApiResponse<void>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { error } = await supabase.from('profiles').update({ status }).eq('id', String(id));
+        if (!error) return { success: true };
+      } catch (err) {
+        console.warn('Supabase updateUserStatus fallback to HTTP:', err);
+      }
+    }
     return request<void>(`/admin/users/${id}/status`, {
       method: 'PATCH',
       body: JSON.stringify({ status }),
+    });
+  },
+
+  async updateUserPhone(id: string | number, phone: string): Promise<ApiResponse<{ phone: string; normalized: string }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { error } = await supabase.from('profiles').update({ phone }).eq('id', String(id));
+        if (!error) {
+          return { success: true, data: { phone, normalized: phone } };
+        }
+      } catch (err) {
+        console.warn('Supabase updateUserPhone fallback to HTTP:', err);
+      }
+    }
+    return request<{ phone: string; normalized: string }>(`/admin/users/${id}/phone`, {
+      method: 'PATCH',
+      body: JSON.stringify({ phone }),
+    });
+  },
+
+  async reminderTemplates(): Promise<ApiResponse<{ templates: ReminderTemplate[] }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('reminder_templates')
+          .select('*')
+          .order('is_default', { ascending: false });
+        if (!error && data && data.length > 0) {
+          return { success: true, data: { templates: data as ReminderTemplate[] } };
+        }
+      } catch (err) {
+        console.warn('Supabase reminderTemplates fallback to HTTP:', err);
+      }
+    }
+    return request<{ templates: ReminderTemplate[] }>('/admin/reminders/templates');
+  },
+
+  async updateReminderTemplate(key: string, content: string, title?: string): Promise<ApiResponse<void>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const updatePayload: Record<string, any> = { content, updated_at: new Date().toISOString() };
+        if (title) updatePayload.title = title;
+        const { error } = await supabase.from('reminder_templates').update(updatePayload).eq('template_key', key);
+        if (!error) return { success: true };
+      } catch (err) {
+        console.warn('Supabase updateReminderTemplate fallback to HTTP:', err);
+      }
+    }
+    return request<void>(`/admin/reminders/templates/${key}`, {
+      method: 'PUT',
+      body: JSON.stringify({ content, title }),
+    });
+  },
+
+  async resetReminderTemplates(): Promise<ApiResponse<{ templates: ReminderTemplate[] }>> {
+    return request<{ templates: ReminderTemplate[] }>('/admin/reminders/templates/reset', {
+      method: 'POST',
+    });
+  },
+
+  async reminders(): Promise<ApiResponse<{ reminders: ClientReminder[] }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('client_reminders')
+          .select('*, profiles:user_id(name, first_name, last_name, phone, establishment_name, email)')
+          .order('opened_at', { ascending: false });
+        if (!error && data) {
+          const mappedReminders: ClientReminder[] = data.map((r: any) => ({
+            id: r.id,
+            user_id: r.user_id,
+            channel: r.channel,
+            template_key: r.template_key,
+            opened_by: r.opened_by,
+            opened_at: r.opened_at,
+            confirmed_at: r.confirmed_at,
+            status: r.status,
+            created_at: r.created_at,
+            establishment_name: r.profiles?.establishment_name,
+            name: r.profiles?.name,
+            first_name: r.profiles?.first_name,
+            last_name: r.profiles?.last_name,
+            phone: r.profiles?.phone,
+            email: r.profiles?.email,
+          }));
+          return { success: true, data: { reminders: mappedReminders } };
+        }
+      } catch (err) {
+        console.warn('Supabase reminders fallback to HTTP:', err);
+      }
+    }
+    return request<{ reminders: ClientReminder[] }>('/admin/reminders');
+  },
+
+  async recordReminder(userId: string | number, templateKey: string): Promise<ApiResponse<{ reminder: ClientReminder }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const userRes = await supabase.auth.getUser();
+        const adminId = userRes.data.user?.id || userId;
+        const { data, error } = await supabase
+          .from('client_reminders')
+          .insert({
+            user_id: String(userId),
+            template_key: templateKey,
+            channel: 'whatsapp_manuel',
+            opened_by: adminId,
+            status: 'opened',
+            opened_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+        if (!error && data) {
+          return { success: true, data: { reminder: data as ClientReminder } };
+        }
+      } catch (err) {
+        console.warn('Supabase recordReminder fallback to HTTP:', err);
+      }
+    }
+    return request<{ reminder: ClientReminder }>('/admin/reminders', {
+      method: 'POST',
+      body: JSON.stringify({ userId, templateKey }),
+    });
+  },
+
+  async confirmReminder(id: string | number): Promise<ApiResponse<{ reminder: ClientReminder }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const now = new Date().toISOString();
+        const { data, error } = await supabase
+          .from('client_reminders')
+          .update({
+            status: 'confirmed',
+            confirmed_at: now,
+          })
+          .eq('id', String(id))
+          .select()
+          .single();
+        if (!error && data) {
+          if (data.user_id) {
+            await supabase.from('profiles').update({ last_reminder_at: now }).eq('id', data.user_id);
+          }
+          return { success: true, data: { reminder: data as ClientReminder } };
+        }
+      } catch (err) {
+        console.warn('Supabase confirmReminder fallback to HTTP:', err);
+      }
+    }
+    return request<{ reminder: ClientReminder }>(`/admin/reminders/${id}/confirm`, {
+      method: 'POST',
+    });
+  },
+
+  async cancelReminder(id: string | number): Promise<ApiResponse<{ reminder: ClientReminder }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('client_reminders')
+          .update({ status: 'cancelled' })
+          .eq('id', String(id))
+          .select()
+          .single();
+        if (!error && data) {
+          return { success: true, data: { reminder: data as ClientReminder } };
+        }
+      } catch (err) {
+        console.warn('Supabase cancelReminder fallback to HTTP:', err);
+      }
+    }
+    return request<{ reminder: ClientReminder }>(`/admin/reminders/${id}/cancel`, {
+      method: 'POST',
     });
   },
 

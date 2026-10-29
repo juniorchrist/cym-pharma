@@ -2,7 +2,8 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { RegisterPayload, User } from '../types';
 import { Auth as AuthService } from '../services/api';
 import { storage } from '../utils/storage';
-import { verifyAdminPassword } from '../config/adminAccess';
+import { supabase, isSupabaseConfigured } from '../services/supabase';
+import { hasAdminRole } from '../config/adminAccess';
 
 interface AuthContextType {
   user: User | null;
@@ -13,8 +14,8 @@ interface AuthContextType {
   isPendingApproval: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; message?: string }>;
   register: (payload: RegisterPayload) => Promise<{ success: boolean; message?: string }>;
-  logout: () => void;
-  checkAdminPassword: (password: string) => boolean;
+  logout: () => Promise<void>;
+  checkAdminPassword: (emailOrPassword: string, optionalPassword?: string) => Promise<boolean>;
   dismissPendingBanner: () => void;
   showPendingBanner: boolean;
 }
@@ -28,12 +29,72 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [showPendingBanner, setShowPendingBanner] = useState<boolean>(true);
 
   useEffect(() => {
-    // Synchronize initial state
-    const currentToken = storage.getAuthToken();
-    const currentUser = storage.getUser();
-    setToken(currentToken);
-    setUser(currentUser);
-    setHasAdminAccessState(storage.getAdminAccess());
+    // Synchronise l'état React avec l'état réel de la session Supabase.
+    // onAuthStateChange émet immédiatement l'état courant (SIGNED_IN / SIGNED_OUT / TOKEN_REFRESHED…).
+    if (!isSupabaseConfigured() || !supabase) {
+      // Fallback non-Supabase : charger depuis le storage local
+      const currentToken = storage.getAuthToken();
+      const currentUser = storage.getUser();
+      setToken(currentToken);
+      setUser(currentUser);
+      setHasAdminAccessState(storage.getAdminAccess());
+      return;
+    }
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT' || !session) {
+        // Session terminée — remettre à zéro tout l'état local
+        storage.removeAuthToken();
+        storage.removeUser();
+        storage.setAdminAccess(false);
+        setToken(null);
+        setUser(null);
+        setHasAdminAccessState(false);
+        return;
+      }
+
+      if (session) {
+        const newToken = session.access_token;
+
+        // Lire le profil depuis la base pour obtenir le rôle réel (jamais depuis user_metadata)
+        const { data: profile } = await supabase!
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .maybeSingle();
+
+        const mappedUser: User = {
+          id: session.user.id,
+          email: session.user.email || '',
+          name: profile?.name || session.user.user_metadata?.name || '',
+          first_name: profile?.first_name,
+          last_name: profile?.last_name,
+          // SÉCURITÉ : le rôle vient UNIQUEMENT du profil PostgreSQL, jamais des métadonnées
+          role: profile?.role || 'client',
+          establishment_name: profile?.establishment_name,
+          phone: profile?.phone,
+          status: profile?.status || 'active',
+          commune: profile?.commune,
+          org: profile?.org,
+        };
+
+        storage.setAuthToken(newToken);
+        storage.setUser(mappedUser);
+        if (mappedUser.role === 'admin') {
+          storage.setAdminAccess(true);
+          setHasAdminAccessState(true);
+        } else {
+          storage.setAdminAccess(false);
+          setHasAdminAccessState(false);
+        }
+        setToken(newToken);
+        setUser(mappedUser);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const isAuthenticated = Boolean(token && user);
@@ -64,7 +125,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return { success: false, message: res.message || 'Erreur lors de la création du compte' };
   };
 
-  const logout = () => {
+  /**
+   * Déconnexion : ferme la session Supabase côté serveur, puis efface l'état local.
+   * onAuthStateChange s'occupera de l'état React via l'événement SIGNED_OUT.
+   */
+  const logout = async (): Promise<void> => {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        await supabase.auth.signOut();
+      } catch (err) {
+        console.warn('[Auth] Erreur lors du signOut Supabase :', err);
+      }
+    }
+    // Nettoyage local immédiat (onAuthStateChange le fera aussi, mais on ne veut pas attendre)
     storage.removeAuthToken();
     storage.removeUser();
     storage.setAdminAccess(false);
@@ -74,18 +147,32 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   /**
-   * Vérifie les droits d'administration.
-   * L'accès administrateur requiert une session authentifiée avec le rôle 'admin'.
-   * Aucune session fictive ni token inventé n'est créé.
+   * Vérification des privilèges administrateur réels.
+   * Valide la session auprès de Supabase / Backend. Aucun mot de passe codé en dur.
    */
-  const checkAdminPassword = (_password: string): boolean => {
-    // Si l'utilisateur actuel est authentifié comme admin, l'accès est confirmé
-    if (user && user.role === 'admin') {
+  const checkAdminPassword = async (emailOrPassword: string, optionalPassword?: string): Promise<boolean> => {
+    // Si l'utilisateur actuel est déjà authentifié avec le rôle admin
+    if (user && user.role === 'admin' && user.status === 'active') {
       storage.setAdminAccess(true);
       setHasAdminAccessState(true);
       return true;
     }
-    // Aucun mot de passe en dur ne peut élever les privilèges sans session admin
+
+    // Sinon, authentifier avec l'email et le mot de passe fournis
+    const email = optionalPassword ? emailOrPassword : (user?.email || emailOrPassword);
+    const password = optionalPassword ? optionalPassword : emailOrPassword;
+
+    if (!email || !password) return false;
+
+    const res = await login(email, password);
+    if (res.success) {
+      const refreshedUser = storage.getUser();
+      if (refreshedUser && refreshedUser.role === 'admin' && refreshedUser.status === 'active') {
+        storage.setAdminAccess(true);
+        setHasAdminAccessState(true);
+        return true;
+      }
+    }
     return false;
   };
 
