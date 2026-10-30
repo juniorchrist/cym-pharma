@@ -93,6 +93,78 @@ async function request<T = unknown>(
   }
 }
 
+/**
+ * Calcule l'URL de redirection sécurisée pour les e-mails de confirmation Supabase.
+ * Utilise window.location.origin pour être toujours aligné sur l'environnement réel
+ * (local dev ou production InfinityFree) sans inventer de nouvelle route.
+ */
+export function getAuthRedirectUrl(): string {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return `${window.location.origin}/connexion`;
+  }
+  return 'https://cympharma.infinityfreeapp.com/connexion';
+}
+
+/**
+ * Traduit les erreurs d'authentification Supabase en messages clairs et professionnels en français.
+ * Protège les clés API et détails d'implémentation conformément aux exigences de sécurité.
+ */
+export function translateAuthError(error: any): string {
+  if (!error) return 'Une erreur inattendue est survenue.';
+  const msg = (typeof error === 'string' ? error : error?.message || '').toLowerCase();
+  const code = (error?.code || '').toLowerCase();
+
+  if (
+    msg.includes('rate limit') ||
+    code.includes('rate_limit') ||
+    code.includes('over_email_send_rate_limit') ||
+    msg.includes('once every') ||
+    msg.includes('too many requests')
+  ) {
+    return "Trop de demandes d'envoi. Pour des raisons de sécurité, veuillez patienter une minute avant de réessayer.";
+  }
+  if (msg.includes('email not confirmed') || code === 'email_not_confirmed') {
+    return "Votre adresse e-mail n'a pas encore été confirmée. Veuillez vérifier votre boîte de réception ou demander un nouveau lien de confirmation ci-dessous.";
+  }
+  if (msg.includes('already confirmed') || msg.includes('user already confirmed')) {
+    return "Cette adresse e-mail est déjà confirmée. Vous pouvez vous connecter directement.";
+  }
+  if (
+    msg.includes('invalid login credentials') ||
+    msg.includes('invalid credentials') ||
+    msg.includes('invalid username or password')
+  ) {
+    return "Email ou mot de passe incorrect.";
+  }
+  if (
+    msg.includes('smtp') ||
+    msg.includes('error sending confirmation email') ||
+    msg.includes('error sending')
+  ) {
+    return "Le service d'envoi d'e-mails rencontre une difficulté temporaire. Veuillez patienter quelques instants ou contacter le support CYM Pharma.";
+  }
+  if (
+    msg.includes('network') ||
+    msg.includes('failed to fetch') ||
+    msg.includes('networkerror') ||
+    msg.includes('connection')
+  ) {
+    return "Impossible de joindre le serveur. Veuillez vérifier votre connexion internet et réessayer.";
+  }
+  if (msg.includes('redirect') || msg.includes('redirect_to')) {
+    return "L'URL de redirection n'est pas autorisée dans la configuration Supabase.";
+  }
+  if (
+    msg.includes('invalid email') ||
+    msg.includes('email format') ||
+    msg.includes('validation')
+  ) {
+    return "Veuillez saisir une adresse e-mail valide.";
+  }
+
+  return error?.message || "Une erreur est survenue lors de l'opération. Veuillez réessayer.";
+}
+
 // ── Authentification ──
 export const Auth = {
   async login(email: string, password: string): Promise<ApiResponse<{ token: string; user: User }>> {
@@ -104,9 +176,16 @@ export const Auth = {
         });
 
         if (authError || !authData.user || !authData.session) {
+          const isNotConfirmed =
+            authError?.message?.toLowerCase().includes('email not confirmed') ||
+            authError?.code === 'email_not_confirmed';
+
           return {
             success: false,
-            message: authError?.message || 'Identifiants de connexion incorrects',
+            code: isNotConfirmed ? 'EMAIL_NOT_CONFIRMED' : undefined,
+            message: isNotConfirmed
+              ? "Votre adresse e-mail n'a pas encore été confirmée. Veuillez cliquer sur le lien reçu par e-mail ou demander un nouveau lien de confirmation ci-dessous."
+              : translateAuthError(authError),
           };
         }
 
@@ -139,7 +218,7 @@ export const Auth = {
       } catch (err: any) {
         return {
           success: false,
-          message: err?.message || 'Erreur lors de la connexion à Supabase',
+          message: translateAuthError(err),
         };
       }
     }
@@ -165,10 +244,12 @@ export const Auth = {
   async register(payload: RegisterPayload): Promise<ApiResponse<{ token?: string; user?: User }>> {
     if (isSupabaseConfigured() && supabase) {
       try {
+        const redirectTo = getAuthRedirectUrl();
         const { data: authData, error: authError } = await supabase.auth.signUp({
           email: payload.email.trim(),
           password: payload.password,
           options: {
+            emailRedirectTo: redirectTo,
             data: {
               name: payload.name || `${payload.first_name || ''} ${payload.last_name || ''}`.trim(),
               role: 'client',
@@ -181,7 +262,7 @@ export const Auth = {
         if (authError || !authData.user) {
           return {
             success: false,
-            message: authError?.message || 'Erreur lors de la création du compte',
+            message: translateAuthError(authError) || 'Erreur lors de la création du compte',
           };
         }
 
@@ -196,14 +277,24 @@ export const Auth = {
           status: 'pending',
         };
 
-        if (token) storage.setAuthToken(token);
-        storage.setUser(user);
+        if (token) {
+          storage.setAuthToken(token);
+          storage.setUser(user);
+          return { success: true, data: { token, user } };
+        }
 
-        return { success: true, data: { token, user } };
+        // Si confirmation requise : pas de token ni de session prématurée
+        return {
+          success: true,
+          code: 'CONFIRMATION_REQUIRED',
+          data: { user },
+          message:
+            'Compte créé avec succès ! Un e-mail de confirmation vous a été envoyé. Veuillez cliquer sur le lien reçu pour activer votre compte.',
+        };
       } catch (err: any) {
         return {
           success: false,
-          message: err?.message || 'Erreur lors de l\'enregistrement',
+          message: translateAuthError(err) || 'Erreur lors de l\'enregistrement',
         };
       }
     }
@@ -218,6 +309,54 @@ export const Auth = {
       if (res.data.user) storage.setUser(res.data.user);
     }
 
+    return res;
+  },
+
+  async resendConfirmationEmail(email: string): Promise<ApiResponse<void>> {
+    const trimmedEmail = email.trim();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
+      return {
+        success: false,
+        message: 'Veuillez saisir une adresse e-mail valide avant de demander un renvoi.',
+      };
+    }
+
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const redirectTo = getAuthRedirectUrl();
+        const { error } = await supabase.auth.resend({
+          type: 'signup',
+          email: trimmedEmail,
+          options: {
+            emailRedirectTo: redirectTo,
+          },
+        });
+
+        if (error) {
+          return {
+            success: false,
+            message: translateAuthError(error),
+          };
+        }
+
+        return {
+          success: true,
+          message:
+            'Une nouvelle demande de confirmation a été prise en compte. Vérifiez votre boîte de réception ainsi que vos courriers indésirables.',
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          message: translateAuthError(err),
+        };
+      }
+    }
+
+    const res = await request<void>('/auth/resend-confirmation', {
+      method: 'POST',
+      body: JSON.stringify({ email: trimmedEmail }),
+    });
     return res;
   },
 };

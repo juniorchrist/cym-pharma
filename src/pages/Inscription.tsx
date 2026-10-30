@@ -55,6 +55,7 @@ export const Inscription: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [requiresConfirmation, setRequiresConfirmation] = useState(false);
 
   const { register } = useAuth();
   const navigate = useNavigate();
@@ -128,10 +129,14 @@ export const Inscription: React.FC = () => {
 
       if (res.success) {
         setSuccess(true);
-        const redirectParam = searchParams.get('redirect');
-        setTimeout(() => {
-          navigate(redirectParam === 'checkout' ? '/commande' : '/dashboard');
-        }, 1200);
+        if (res.code === 'CONFIRMATION_REQUIRED') {
+          setRequiresConfirmation(true);
+        } else {
+          const redirectParam = searchParams.get('redirect');
+          setTimeout(() => {
+            navigate(redirectParam === 'checkout' ? '/commande' : '/dashboard');
+          }, 1200);
+        }
       } else {
         setError(res.message || 'Erreur lors de la création du compte.');
       }
@@ -527,16 +532,38 @@ export const Inscription: React.FC = () => {
                 <h2 className="text-2xl font-bold tracking-tight mb-2 text-slate-900">
                   Compte créé avec succès !
                 </h2>
-                <p className="text-xs leading-relaxed max-w-xs mb-6 text-slate-500">
-                  Bienvenue sur CYM Pharma. Vous allez être redirigé vers votre espace professionnel.
-                </p>
-                <Link
-                  to="/dashboard"
-                  className="rounded-xl px-6 py-3 text-xs font-bold text-white transition hover:brightness-110"
-                  style={{ background: 'var(--primary)' }}
-                >
-                  Accéder au dashboard
-                </Link>
+                {requiresConfirmation ? (
+                  <>
+                    <p className="text-xs leading-relaxed max-w-sm mb-4 text-slate-600">
+                      Un e-mail de confirmation a été envoyé à <strong className="text-slate-900 font-semibold">{email}</strong>.
+                      Veuillez cliquer sur le lien reçu pour activer votre compte avant de vous connecter.
+                    </p>
+                    <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-800 text-[11px] max-w-sm mb-6 text-left">
+                      💡 Pensez à vérifier vos courriers indésirables (spams) si vous ne trouvez pas l'e-mail dans votre boîte de réception.
+                    </div>
+                    <Link
+                      to={`/connexion?email=${encodeURIComponent(email)}`}
+                      className="rounded-xl px-6 py-3 text-xs font-bold text-white transition hover:brightness-110 flex items-center gap-2"
+                      style={{ background: 'var(--primary)' }}
+                    >
+                      <span>Aller à la page de connexion</span>
+                      <ArrowRight className="w-3.5 h-3.5" strokeWidth={2} />
+                    </Link>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs leading-relaxed max-w-xs mb-6 text-slate-500">
+                      Bienvenue sur CYM Pharma. Vous allez être redirigé vers votre espace professionnel.
+                    </p>
+                    <Link
+                      to="/dashboard"
+                      className="rounded-xl px-6 py-3 text-xs font-bold text-white transition hover:brightness-110"
+                      style={{ background: 'var(--primary)' }}
+                    >
+                      Accéder au dashboard
+                    </Link>
+                  </>
+                )}
               </div>
             )}
           </div>

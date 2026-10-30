@@ -12,8 +12,9 @@ interface AuthContextType {
   isAdmin: boolean;
   hasAdminAccess: boolean;
   isPendingApproval: boolean;
-  login: (email: string, password: string) => Promise<{ success: boolean; message?: string }>;
-  register: (payload: RegisterPayload) => Promise<{ success: boolean; message?: string }>;
+  login: (email: string, password: string) => Promise<{ success: boolean; message?: string; code?: string }>;
+  register: (payload: RegisterPayload) => Promise<{ success: boolean; message?: string; code?: string }>;
+  resendConfirmationEmail: (email: string) => Promise<{ success: boolean; message: string }>;
   logout: () => Promise<void>;
   checkAdminPassword: (emailOrPassword: string, optionalPassword?: string) => Promise<boolean>;
   dismissPendingBanner: () => void;
@@ -112,17 +113,25 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
       return { success: true };
     }
-    return { success: false, message: res.message || 'Identifiants incorrects' };
+    return { success: false, message: res.message || 'Identifiants incorrects', code: res.code };
   };
 
   const register = async (payload: RegisterPayload) => {
     const res = await AuthService.register(payload);
     if (res.success && res.data) {
       if (res.data.token) setToken(res.data.token);
-      if (res.data.user) setUser(res.data.user);
-      return { success: true };
+      if (res.data.user && res.data.token) setUser(res.data.user);
+      return { success: true, message: res.message, code: res.code };
     }
-    return { success: false, message: res.message || 'Erreur lors de la création du compte' };
+    return { success: false, message: res.message || 'Erreur lors de la création du compte', code: res.code };
+  };
+
+  const resendConfirmationEmail = async (email: string) => {
+    const res = await AuthService.resendConfirmationEmail(email);
+    return {
+      success: res.success,
+      message: res.message || (res.success ? 'Demande prise en compte avec succès.' : "Erreur lors de l'envoi."),
+    };
   };
 
   /**
@@ -191,6 +200,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isPendingApproval,
         login,
         register,
+        resendConfirmationEmail,
         logout,
         checkAdminPassword,
         dismissPendingBanner,
