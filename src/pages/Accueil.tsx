@@ -17,6 +17,7 @@ import {
 import { PageShell } from '../components/layout/PageShell';
 import { useReveal } from '../hooks/useReveal';
 import { Products } from '../services/api';
+import heroImage from '../assets/images/materiel-medical-clinique.webp';
 
 export const Accueil: React.FC = () => {
   useReveal();
@@ -73,7 +74,7 @@ export const Accueil: React.FC = () => {
 
             <div className="relative rounded-2xl overflow-hidden card h-64 sm:h-80 lg:h-[26rem]">
               <img
-                src="/assets/images/Matériel médical sur table clinique.png"
+                src={heroImage}
                 alt="Équipements médicaux CYM Pharma"
                 className="w-full h-full object-cover"
                 onError={(e) => {
