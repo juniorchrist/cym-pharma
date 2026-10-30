@@ -82,13 +82,23 @@ export const Dashboard: React.FC = () => {
 
   const [statusFilter, setStatusFilter] = useState('all');
 
-  // Profile Form state
-  const [profOrg, setProfOrg] = useState(user?.establishment_name || user?.org || '');
-  const [profName, setProfName] = useState(
-    user?.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : user?.name || ''
-  );
-  const [profEmail, setProfEmail] = useState(user?.email || '');
-  const [profPhone, setProfPhone] = useState(user?.phone || '');
+  // Profile Form state — initialisé vide, rechargé via useEffect quand user est disponible
+  const [profOrg, setProfOrg] = useState('');
+  const [profName, setProfName] = useState('');
+  const [profEmail, setProfEmail] = useState('');
+  const [profPhone, setProfPhone] = useState('');
+
+  // Sync des inputs de profil dès que user est chargé depuis le contexte d'auth
+  useEffect(() => {
+    if (user) {
+      setProfOrg(user.establishment_name || user.org || '');
+      setProfName(
+        user.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : user.name || ''
+      );
+      setProfEmail(user.email || '');
+      setProfPhone(user.phone || '');
+    }
+  }, [user]);
 
   // Urgent alert input
   const [urgentInput, setUrgentInput] = useState('');
@@ -203,9 +213,40 @@ export const Dashboard: React.FC = () => {
     return (o.status || '').toLowerCase() === statusFilter.toLowerCase();
   });
 
-  const displayOrg = profOrg || '';
-  const displayName = profName || '';
-  const initials = displayOrg.slice(0, 2).toUpperCase();
+  // Dernière commande réelle (la plus récente)
+  const lastOrder = orders.length > 0 ? orders[0] : null;
+
+  // Commande en cours de livraison active
+  const activeShipment = orders.find((o) => {
+    const s = (o.status || '').toLowerCase();
+    return s.includes('livraison') || s.includes('expédition') || s === 'shipped';
+  }) || null;
+
+  // Produits de réapprovisionnement rapide — uniquement depuis l'historique réel
+  const reorderProducts = (() => {
+    const seen = new Set<string>();
+    const result: Array<{ id: string; name: string; unit?: string; ref?: string }> = [];
+    for (const o of orders) {
+      for (const it of (o.items || [])) {
+        const key = String(it.product_id || it.productId || it.name || '');
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          result.push({
+            id: key,
+            name: it.name || `Produit (réf. ${key})`,
+            unit: it.unit || 'Unité',
+            ref: it.reference || String(it.product_id || it.productId || ''),
+          });
+        }
+      }
+      if (result.length >= 5) break;
+    }
+    return result;
+  })();
+
+  const displayOrg = profOrg || user?.establishment_name || user?.org || '';
+  const displayName = profName || user?.name || '';
+  const initials = displayOrg.slice(0, 2).toUpperCase() || (user?.email || '??').slice(0, 2).toUpperCase();
 
   return (
     <PageShell>
@@ -431,23 +472,32 @@ export const Dashboard: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Bloc Suivi de livraison & Timeline */}
+                {/* Bloc Suivi de livraison & Timeline — données réelles uniquement */}
                 <div className="dash-card p-6">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100 mb-5">
-                    <div>
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                        Suivi d'expédition actif
+                  {activeShipment ? (
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100 mb-5">
+                      <div>
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                          Suivi d'expédition actif
+                        </span>
+                        <h3 id="active-delivery-ref" className="text-base font-bold text-slate-900 mt-0.5">
+                          <span className="font-ref text-[var(--primary)]">{activeShipment.orderNumber || activeShipment.id}</span>
+                          {activeShipment.establishment_name && ` — ${activeShipment.establishment_name}`}
+                        </h3>
+                      </div>
+                      <span id="active-delivery-badge" className="status-pill status-pill-blue self-start sm:self-auto">
+                        <Truck className="w-3 h-3" />
+                        <span>{activeShipment.status || 'En livraison'}</span>
                       </span>
-                      <h3 id="active-delivery-ref" className="text-base font-bold text-slate-900 mt-0.5">
-                        <span className="font-ref text-[var(--primary)]">CMD-2026-8842</span> — Lot Consommables Médicaux
-                      </h3>
                     </div>
-                    <span id="active-delivery-badge" className="status-pill status-pill-blue self-start sm:self-auto">
-                      <Truck className="w-3 h-3" />
-                      <span>En livraison</span>
-                    </span>
-                  </div>
+                  ) : (
+                    <div className="pb-4 border-b border-slate-100 mb-5">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Suivi d'expédition</span>
+                    </div>
+                  )}
 
+                  {activeShipment ? (
+                    <>
                   {/* Timeline 4 étapes avec ligne de progression connectée */}
                   <div className="relative py-3 mb-4">
                     <div className="absolute top-7 left-[12%] right-[12%] h-1 bg-slate-100 -translate-y-1/2 z-0 hidden sm:block">
@@ -496,18 +546,18 @@ export const Dashboard: React.FC = () => {
                     <div className="flex items-center gap-2">
                       <span className="text-slate-400 font-medium">Destination :</span>
                       <span id="active-delivery-city" className="font-semibold text-slate-800">
-                        Abidjan, Cocody
+                        {activeShipment?.shipping_city || 'Abidjan'}
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-slate-400 font-medium">Mode de transport :</span>
+                      <span className="text-slate-400 font-medium">Établissement :</span>
                       <span id="active-delivery-mode" className="font-semibold text-slate-800">
-                        Livraison express locale
+                        {activeShipment?.establishment_name || displayOrg || 'Votre établissement'}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 sm:justify-end">
                       <Link
-                        to="/facture?id=CMD-2026-8842"
+                        to={`/facture?id=${activeShipment?.orderNumber || activeShipment?.id || ''}`}
                         target="_blank"
                         className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--primary)] hover:underline"
                       >
@@ -516,61 +566,96 @@ export const Dashboard: React.FC = () => {
                       </Link>
                     </div>
                   </div>
+                    </>
+                  ) : (
+                    <div className="py-8 text-center space-y-2">
+                      <Truck className="w-8 h-8 text-slate-200 mx-auto" strokeWidth={1.5} />
+                      <p className="text-sm font-semibold text-slate-600">Aucune expédition en cours</p>
+                      <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                        Le suivi de livraison apparaîtra ici lorsqu'une commande sera en cours d'acheminement.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
-                {/* Bloc "Dernier achat" & "Achats récents" */}
+                {/* Bloc "Dernier achat" & "Réapprovisionnement rapide" — données réelles uniquement */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   {/* Dernier achat mis en avant */}
                   <div className="dash-card p-6 lg:col-span-1 flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                          Dernier achat
-                        </span>
-                        <span className="font-ref text-xs font-bold text-slate-900" id="last-order-ref">
-                          CMD-2026-8842
-                        </span>
+                    {lastOrder ? (
+                      <>
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                            Dernier achat
+                          </span>
+                          <span className="font-ref text-xs font-bold text-slate-900" id="last-order-ref">
+                            {lastOrder.orderNumber || lastOrder.id}
+                          </span>
+                        </div>
+                        <h4 id="last-order-title" className="text-sm font-bold text-slate-900 leading-snug">
+                          {(lastOrder.items || []).length > 0
+                            ? (lastOrder.items || []).slice(0, 2).map((it: any) => it.name || 'Dispositif médical').join(' & ')
+                            : lastOrder.establishment_name || 'Commande de dispositifs médicaux'}
+                        </h4>
+                        <p id="last-order-meta" className="text-xs text-slate-500 mt-1">
+                          {lastOrder.created_at
+                            ? new Date(lastOrder.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })
+                            : 'Date inconnue'}
+                          {' • '}{(lastOrder.items || []).length} article(s)
+                        </p>
+                        <div className="my-4 pt-3 border-t border-slate-100 flex items-baseline justify-between">
+                          <span className="text-xs text-slate-400 font-medium">Montant</span>
+                          <span id="last-order-total" className="text-sm font-bold text-slate-900">
+                            {lastOrder.total ? formatCurrency(lastOrder.total) : <span className="text-slate-400 font-normal italic">En chiffrage</span>}
+                          </span>
+                        </div>
                       </div>
-                      <h4 id="last-order-title" className="text-sm font-bold text-slate-900 leading-snug">
-                        Gants d'examen Nitrile &amp; Compresses stériles
-                      </h4>
-                      <p id="last-order-meta" className="text-xs text-slate-500 mt-1">
-                        Passée aujourd'hui • 3 articles
-                      </p>
-                      <div className="my-4 pt-3 border-t border-slate-100 flex items-baseline justify-between">
-                        <span className="text-xs text-slate-400 font-medium">Montant Facturé</span>
-                        <span id="last-order-total" className="text-sm font-bold text-slate-900">
-                          125 000 FCFA
-                        </span>
-                      </div>
-                    </div>
 
-                    <div className="space-y-2 pt-2">
-                      <button
-                        type="button"
-                        onClick={() => handleReorder('CMD-2026-8842')}
-                        className="w-full btn-cym-primary"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" />
-                        <span>Commander à nouveau</span>
-                      </button>
-                      <Link
-                        to="/facture?id=CMD-2026-8842"
-                        target="_blank"
-                        className="w-full btn-cym-secondary text-center"
-                      >
-                        <FileText className="w-3.5 h-3.5" />
-                        <span>Voir la Facture A4</span>
-                      </Link>
-                    </div>
+                      <div className="space-y-2 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => handleReorder(String(lastOrder.orderNumber || lastOrder.id))}
+                          className="w-full btn-cym-primary"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>Commander à nouveau</span>
+                        </button>
+                        <Link
+                          to={`/facture?id=${lastOrder.orderNumber || lastOrder.id}`}
+                          target="_blank"
+                          className="w-full btn-cym-secondary text-center"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          <span>Voir la Facture A4</span>
+                        </Link>
+                      </div>
+                      </>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center py-8 text-center space-y-3">
+                        <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center">
+                          <ShoppingCart className="w-5 h-5 text-slate-300" strokeWidth={1.5} />
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-slate-700">Aucune commande</p>
+                          <p className="text-xs text-slate-400 mt-1 max-w-[180px] mx-auto">
+                            Vous n'avez pas encore passé de commande.
+                          </p>
+                        </div>
+                        <Link to="/catalogue" className="btn-cym-primary text-xs !py-1.5 !px-4">
+                          <Plus className="w-3 h-3" />
+                          <span>Voir le catalogue</span>
+                        </Link>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Achats récents / Réapprovisionnement rapide */}
+                  {/* Réapprovisionnement rapide — uniquement depuis l'historique réel */}
                   <div id="reappro-section" className="dash-card p-6 lg:col-span-2">
                     <div className="flex items-center justify-between mb-4">
                       <div>
                         <h3 className="text-sm font-bold text-slate-900">Réapprovisionnement rapide</h3>
-                        <p className="text-xs text-slate-500">Ajoutez directement à votre panier en 1 clic</p>
+                        <p className="text-xs text-slate-500">Vos produits habituels en 1 clic</p>
                       </div>
                       <Link
                         to="/catalogue"
@@ -582,57 +667,40 @@ export const Dashboard: React.FC = () => {
                     </div>
 
                     <div className="space-y-3" id="quick-reorder-list">
-                      <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:border-slate-200 transition bg-slate-50/70">
-                        <div className="min-w-0 pr-3">
-                          <p className="text-xs font-bold text-slate-900 truncate">
-                            Gants d'examen Nitrile (Boîte 100)
+                      {reorderProducts.length > 0 ? (
+                        reorderProducts.map((prod) => (
+                          <div key={prod.id} className="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:border-slate-200 transition bg-slate-50/70">
+                            <div className="min-w-0 pr-3">
+                              <p className="text-xs font-bold text-slate-900 truncate">{prod.name}</p>
+                              {prod.ref && <p className="text-[11px] text-slate-500">Réf. {prod.ref}</p>}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleReorderProduct(prod.id, prod.name)}
+                              className="btn-cym-primary text-xs !py-1.5 !px-3 shrink-0"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>Ajouter</span>
+                            </button>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="py-8 text-center space-y-2">
+                          <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto">
+                            <Package className="w-5 h-5 text-slate-300" strokeWidth={1.5} />
+                          </div>
+                          <p className="text-sm font-semibold text-slate-600">Aucun produit habituel</p>
+                          <p className="text-xs text-slate-400 max-w-xs mx-auto">
+                            Vos produits habituels apparaîtront ici après votre première commande.
                           </p>
-                          <p className="text-[11px] text-slate-500">Consommables médicaux • Réf. GNT-NIT-100</p>
+                          <Link to="/catalogue" className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--primary)] hover:underline mt-1">
+                            <Plus className="w-3 h-3" />
+                            <span>Parcourir le catalogue</span>
+                          </Link>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleReorderProduct('gants-examen-nitrile-100', 'Gants d\'examen Nitrile (Boîte 100)')}
-                          className="btn-cym-primary text-xs !py-1.5 !px-3 shrink-0"
-                        >
-                          <Plus className="w-3 h-3" />
-                          <span>Ajouter</span>
-                        </button>
-                      </div>
-
-                      <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:border-slate-200 transition bg-slate-50/70">
-                        <div className="min-w-0 pr-3">
-                          <p className="text-xs font-bold text-slate-900 truncate">
-                            Masques chirurgicaux Type IIR (Boîte 50)
-                          </p>
-                          <p className="text-[11px] text-slate-500">Protection respiratoire • Réf. MSK-IIR-50</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleReorderProduct('masques-chirurgicaux-type-iir-50', 'Masques chirurgicaux Type IIR (Boîte 50)')}
-                          className="btn-cym-primary text-xs !py-1.5 !px-3 shrink-0"
-                        >
-                          <Plus className="w-3 h-3" />
-                          <span>Ajouter</span>
-                        </button>
-                      </div>
-
-                      <div className="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:border-slate-200 transition bg-slate-50/70">
-                        <div className="min-w-0 pr-3">
-                          <p className="text-xs font-bold text-slate-900 truncate">
-                            Seringues 5 mL avec aiguille (Pack 50)
-                          </p>
-                          <p className="text-[11px] text-slate-500">Matériel d'injection • Réf. SER-5ML-P50</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleReorderProduct('seringues-5ml-aiguille-pack-50', 'Seringues 5 mL avec aiguille (Pack 50)')}
-                          className="btn-cym-primary text-xs !py-1.5 !px-3 shrink-0"
-                        >
-                          <Plus className="w-3 h-3" />
-                          <span>Ajouter</span>
-                        </button>
-                      </div>
+                      )}
                     </div>
+
                   </div>
                 </div>
 
@@ -825,59 +893,83 @@ export const Dashboard: React.FC = () => {
                     </p>
                   </div>
 
-                  <div className="p-5 rounded-xl border border-slate-200 mb-6 bg-slate-50">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200 mb-4">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-ref text-xs font-bold text-[var(--primary)] px-2 py-0.5 rounded bg-blue-50">
-                            CMD-2026-8842
-                          </span>
-                          <span className="text-xs text-slate-500">Facture #FAC-8842</span>
+                  {activeShipment ? (
+                    <div className="p-5 rounded-xl border border-slate-200 mb-6 bg-slate-50">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200 mb-4">
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-ref text-xs font-bold text-[var(--primary)] px-2 py-0.5 rounded bg-blue-50">
+                              {activeShipment.orderNumber || activeShipment.id}
+                            </span>
+                            {activeShipment.invoice_number && (
+                              <span className="text-xs text-slate-500">Facture #{activeShipment.invoice_number}</span>
+                            )}
+                          </div>
+                          <h4 className="text-sm font-bold text-slate-900">
+                            {(activeShipment.items || []).length > 0
+                              ? (activeShipment.items || []).map((it: any) => it.name || 'Dispositif médical').join(', ')
+                              : activeShipment.establishment_name || 'Commande en cours de livraison'}
+                          </h4>
                         </div>
-                        <h4 className="text-sm font-bold text-slate-900">
-                          Lot de consommables : Gants, Compresses &amp; Seringues
-                        </h4>
+                        <div className="text-left sm:text-right">
+                          <span className="status-pill status-pill-blue">{activeShipment.status || 'En acheminement'}</span>
+                          <p className="text-[11px] text-slate-500 mt-1">
+                            Destination : {activeShipment.shipping_city || displayOrg || 'Abidjan'}
+                          </p>
+                        </div>
                       </div>
-                      <div className="text-left sm:text-right">
-                        <span className="status-pill status-pill-blue">En acheminement actif</span>
-                        <p className="text-[11px] text-slate-500 mt-1">Destination : {displayOrg}, Cocody</p>
-                      </div>
-                    </div>
 
-                    <div className="grid grid-cols-4 gap-2 text-center py-2 mb-3">
-                      <div className="space-y-1">
-                        <div className="w-8 h-8 rounded-full mx-auto flex items-center justify-center text-white bg-emerald-600 shadow-sm">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
+                      <div className="grid grid-cols-4 gap-2 text-center py-2 mb-3">
+                        <div className="space-y-1">
+                          <div className="w-8 h-8 rounded-full mx-auto flex items-center justify-center text-white bg-emerald-600 shadow-sm">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                          </div>
+                          <p className="text-xs font-bold text-slate-900">Validée</p>
+                          <p className="text-[10px] text-slate-400">Officine</p>
                         </div>
-                        <p className="text-xs font-bold text-slate-900">Validée</p>
-                        <p className="text-[10px] text-slate-400">08:30</p>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="w-8 h-8 rounded-full mx-auto flex items-center justify-center text-white bg-emerald-600 shadow-sm">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
+                        <div className="space-y-1">
+                          <div className="w-8 h-8 rounded-full mx-auto flex items-center justify-center text-white bg-emerald-600 shadow-sm">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                          </div>
+                          <p className="text-xs font-bold text-slate-900">Préparée</p>
+                          <p className="text-[10px] text-slate-400">Dépôt</p>
                         </div>
-                        <p className="text-xs font-bold text-slate-900">Préparée</p>
-                        <p className="text-[10px] text-slate-400">10:15</p>
-                      </div>
-                      <div className="space-y-1">
-                        <div
-                          className="w-8 h-8 rounded-full mx-auto flex items-center justify-center text-white shadow-sm"
-                          style={{ background: 'var(--primary)' }}
-                        >
-                          <Truck className="w-3.5 h-3.5" />
+                        <div className="space-y-1">
+                          <div
+                            className="w-8 h-8 rounded-full mx-auto flex items-center justify-center text-white shadow-sm"
+                            style={{ background: 'var(--primary)' }}
+                          >
+                            <Truck className="w-3.5 h-3.5" />
+                          </div>
+                          <p className="text-xs font-bold text-blue-700">En livraison</p>
+                          <p className="text-[10px] text-slate-500 font-medium">En transit</p>
                         </div>
-                        <p className="text-xs font-bold text-blue-700">En livraison</p>
-                        <p className="text-[10px] text-slate-500 font-medium">En transit</p>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="w-8 h-8 rounded-full mx-auto flex items-center justify-center text-xs bg-slate-100 text-slate-400">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
+                        <div className="space-y-1">
+                          <div className="w-8 h-8 rounded-full mx-auto flex items-center justify-center text-xs bg-slate-100 text-slate-400">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                          </div>
+                          <p className="text-xs font-medium text-slate-400">Livrée</p>
+                          <p className="text-[10px] text-slate-400">Estimée</p>
                         </div>
-                        <p className="text-xs font-medium text-slate-400">Livrée</p>
-                        <p className="text-[10px] text-slate-400">Estimée</p>
                       </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="py-12 text-center space-y-3">
+                      <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto">
+                        <Truck className="w-6 h-6 text-slate-300" strokeWidth={1.5} />
+                      </div>
+                      <div>
+                        <p className="text-base font-bold text-slate-700">Aucune livraison en cours</p>
+                        <p className="text-xs text-slate-400 max-w-sm mx-auto mt-1">
+                          Le suivi de vos expéditions apparaîtra ici lorsqu'une commande sera en cours d'acheminement vers votre établissement.
+                        </p>
+                      </div>
+                      <Link to="/catalogue" className="inline-flex items-center gap-2 btn-cym-primary text-xs !py-1.5 !px-4">
+                        <Plus className="w-3 h-3" />
+                        <span>Passer une commande</span>
+                      </Link>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

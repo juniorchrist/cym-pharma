@@ -58,25 +58,62 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const newToken = session.access_token;
 
         // Lire le profil depuis la base pour obtenir le rôle réel (jamais depuis user_metadata)
-        const { data: profile } = await supabase!
+        let { data: profile } = await supabase!
           .from('profiles')
           .select('*')
           .eq('id', session.user.id)
           .maybeSingle();
 
+        const meta = session.user.user_metadata || {};
+        const estName = profile?.establishment_name || meta.establishment_name || meta.establishmentName || meta.client || '';
+        const phoneNum = profile?.phone || meta.phone || '';
+        const communeName = profile?.commune || meta.commune || '';
+        const respName = profile?.name || meta.name || meta.responsable || session.user.email || '';
+        const fName = profile?.first_name || meta.first_name || respName.split(' ')[0] || '';
+        const lName = profile?.last_name || meta.last_name || respName.split(' ').slice(1).join(' ') || '';
+
+        // Si le profil n'existe pas encore ou n'a pas son établissement, auto-réparation
+        if (!profile || (!profile.establishment_name && estName)) {
+          try {
+            const { data: updatedProf } = await supabase!
+              .from('profiles')
+              .upsert({
+                id: session.user.id,
+                email: session.user.email,
+                name: respName,
+                first_name: fName || null,
+                last_name: lName || null,
+                role: profile?.role || 'client',
+                establishment_name: estName || null,
+                phone: phoneNum || null,
+                commune: communeName || null,
+                status: profile?.status || 'active',
+                updated_at: new Date().toISOString(),
+              }, { onConflict: 'id' })
+              .select()
+              .maybeSingle();
+
+            if (updatedProf) {
+              profile = updatedProf;
+            }
+          } catch (autoRepairErr) {
+            console.warn('[AuthContext] Auto-repair notice:', autoRepairErr);
+          }
+        }
+
         const mappedUser: User = {
           id: session.user.id,
           email: session.user.email || '',
-          name: profile?.name || session.user.user_metadata?.name || '',
-          first_name: profile?.first_name,
-          last_name: profile?.last_name,
+          name: respName,
+          first_name: fName,
+          last_name: lName,
           // SÉCURITÉ : le rôle vient UNIQUEMENT du profil PostgreSQL, jamais des métadonnées
           role: profile?.role || 'client',
-          establishment_name: profile?.establishment_name,
-          phone: profile?.phone,
+          establishment_name: estName,
+          phone: phoneNum,
           status: profile?.status || 'active',
-          commune: profile?.commune,
-          org: profile?.org,
+          commune: communeName,
+          org: estName,
         };
 
         storage.setAuthToken(newToken);

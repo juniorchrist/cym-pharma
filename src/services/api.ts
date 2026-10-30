@@ -245,16 +245,44 @@ export const Auth = {
     if (isSupabaseConfigured() && supabase) {
       try {
         const redirectTo = getAuthRedirectUrl();
+
+        // Récupération exhaustive des informations multi-formats
+        const estName = (
+          payload.establishment_name ||
+          payload.establishmentName ||
+          (payload as any).client ||
+          (payload as any).establishment ||
+          ''
+        ).trim();
+
+        const respName = (
+          payload.name ||
+          (payload as any).responsable ||
+          `${payload.first_name || payload.firstName || ''} ${payload.last_name || payload.lastName || ''}`
+        ).trim();
+
+        const phoneVal = (payload.phone || '').trim();
+        const communeVal = ((payload as any).commune || 'Abidjan').trim();
+
+        const nameParts = respName.split(' ').filter(Boolean);
+        const fName = payload.first_name || payload.firstName || nameParts[0] || '';
+        const lName = payload.last_name || payload.lastName || nameParts.slice(1).join(' ') || '';
+
         const { data: authData, error: authError } = await supabase.auth.signUp({
           email: payload.email.trim(),
           password: payload.password,
           options: {
             emailRedirectTo: redirectTo,
             data: {
-              name: payload.name || `${payload.first_name || ''} ${payload.last_name || ''}`.trim(),
+              name: respName,
+              responsable: respName,
+              first_name: fName,
+              last_name: lName,
               role: 'client',
-              establishment_name: payload.establishment_name,
-              phone: payload.phone,
+              establishment_name: estName,
+              establishmentName: estName,
+              phone: phoneVal,
+              commune: communeVal,
             },
           },
         });
@@ -270,12 +298,14 @@ export const Auth = {
         const user: User = {
           id: authData.user.id,
           email: authData.user.email || payload.email,
-          name: payload.name || `${payload.first_name || ''} ${payload.last_name || ''}`.trim(),
-          first_name: payload.first_name,
-          last_name: payload.last_name,
+          name: respName,
+          first_name: fName,
+          last_name: lName,
           role: 'client',
-          establishment_name: payload.establishment_name,
-          phone: payload.phone,
+          establishment_name: estName,
+          org: estName,
+          phone: phoneVal,
+          commune: communeVal,
           status: 'pending',
         };
 
@@ -284,12 +314,13 @@ export const Auth = {
           await supabase.from('profiles').upsert({
             id: authData.user.id,
             email: user.email,
-            name: user.name,
-            first_name: payload.first_name || null,
-            last_name: payload.last_name || null,
+            name: respName,
+            first_name: fName || null,
+            last_name: lName || null,
             role: 'client',
-            establishment_name: payload.establishment_name || null,
-            phone: payload.phone || null,
+            establishment_name: estName || null,
+            phone: phoneVal || null,
+            commune: communeVal || null,
             status: 'active',
           }, { onConflict: 'id' });
         } catch (profErr) {
@@ -795,13 +826,30 @@ export const Admin = {
     });
   },
 
-  async users(params: Record<string, string | number> = {}): Promise<ApiResponse<{ users: User[] }>> {
+  async users(params: Record<string, string | number> = {}): Promise<ApiResponse<{ users: User[]; stats?: { totalRegistered: number; totalConfirmed: number; totalPending: number; totalOnline: number | null } }>> {
+    const query = new URLSearchParams(params as Record<string, string>).toString();
+
+    // 1. Appel du backend sécurisé Render avec rôle admin vérifié (autorisé à lire auth.users côté serveur via service_role)
+    try {
+      const res = await request<{ users: User[]; stats?: { totalRegistered: number; totalConfirmed: number; totalPending: number; totalOnline: number | null } }>(
+        `/admin/users${query ? `?${query}` : ''}`
+      );
+      if (res.success && res.data?.users) {
+        return res;
+      }
+    } catch (httpErr) {
+      console.warn('[CYM Admin] Backend /admin/users fallback to direct Supabase:', httpErr);
+    }
+
+    // 2. Fallback Supabase direct (profiles) en cas d'indisponibilité temporaire du serveur Node.js
     if (isSupabaseConfigured() && supabase) {
       try {
         const { data, error } = await supabase
           .from('profiles')
           .select('*, client_reminders(id, status, opened_at, template_key)')
+          .neq('role', 'admin')
           .order('created_at', { ascending: false });
+
         if (!error && data) {
           const INACTIVITY_DAYS = 60;
           const mapped: User[] = data.map((p: any) => {
@@ -820,7 +868,7 @@ export const Admin = {
 
             return {
               id: p.id,
-              name: p.name || [p.first_name, p.last_name].filter(Boolean).join(' ') || p.email,
+              name: p.name || [p.first_name, p.last_name].filter(Boolean).join(' ') || p.establishment_name || p.email,
               first_name: p.first_name,
               last_name: p.last_name,
               email: p.email,
@@ -840,16 +888,29 @@ export const Admin = {
               latest_reminder_id: latestRem?.id,
               days_since_last_order: daysSince,
               is_server_inactive: isInactive,
+              is_email_confirmed: p.status === 'active' || Boolean(p.last_order_at),
             } as User;
           });
-          return { success: true, data: { users: mapped } };
+
+          return {
+            success: true,
+            data: {
+              users: mapped,
+              stats: {
+                totalRegistered: mapped.length,
+                totalConfirmed: mapped.filter((u) => u.is_email_confirmed).length,
+                totalPending: mapped.filter((u) => !u.is_email_confirmed).length,
+                totalOnline: null,
+              },
+            },
+          };
         }
       } catch (err) {
         console.warn('Supabase users fallback to HTTP:', err);
       }
     }
-    const query = new URLSearchParams(params as Record<string, string>).toString();
-    return request<{ users: User[] }>(`/admin/users${query ? `?${query}` : ''}`);
+
+    return { success: false, message: 'Impossible de charger la liste des utilisateurs.' };
   },
 
   async updateUserStatus(id: string | number, status: string): Promise<ApiResponse<void>> {

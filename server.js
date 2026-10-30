@@ -690,13 +690,147 @@ router.put('/admin/orders/:id/status', handleOrderStatusChange);
 router.get('/admin/users', async (req, res) => {
   const adminId = await requireAdmin(req, res);
   if (!adminId) return;
-  const { data, error } = await db
-    .from('profiles')
-    .select('*, client_reminders(id, status, opened_at, template_key)')
-    .neq('role', 'admin')
-    .order('created_at', { ascending: false });
-  if (error) { send(res, 500, { success: false, message: error.message }); return; }
-  send(res, 200, { success: true, data: { users: data || [] } });
+
+  try {
+    // 1. Récupération de tous les utilisateurs enregistrés dans auth.users via service_role
+    let authUsers = [];
+    try {
+      const { data: listRes, error: listError } = await db.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      if (!listError && listRes?.users) {
+        authUsers = listRes.users;
+      }
+    } catch (authErr) {
+      console.warn('[CYM Admin] Notice listUsers:', authErr?.message);
+    }
+
+    // 2. Récupération de tous les profils et leurs rappels
+    const { data: profiles, error: profError } = await db
+      .from('profiles')
+      .select('*, client_reminders(id, status, opened_at, template_key)')
+      .order('created_at', { ascending: false });
+
+    if (profError) {
+      send(res, 500, { success: false, message: profError.message });
+      return;
+    }
+
+    const profileMap = new Map((profiles || []).map((p) => [p.id, p]));
+    const INACTIVITY_DAYS = 60;
+
+    // 3. Fusion et complétion pour chaque utilisateur
+    // On s'assure d'inclure tous les utilisateurs d'auth.users ainsi que ceux présents dans profiles
+    const allUserIds = Array.from(new Set([
+      ...authUsers.map((u) => u.id),
+      ...(profiles || []).map((p) => p.id),
+    ]));
+
+    const users = [];
+
+    for (const uid of allUserIds) {
+      const authU = authUsers.find((u) => u.id === uid);
+      const prof = profileMap.get(uid);
+
+      const email = authU?.email || prof?.email || '';
+      const role = prof?.role || authU?.user_metadata?.role || authU?.app_metadata?.role || (email.toLowerCase().includes('admin@') ? 'admin' : 'client');
+
+      // Ne pas lister l'administrateur dans la gestion de clientèle client
+      if (role === 'admin' || email.toLowerCase().includes('admin@cympharma.ci')) {
+        continue;
+      }
+
+      const meta = authU?.user_metadata || {};
+      const establishmentName =
+        prof?.establishment_name ||
+        meta.establishment_name ||
+        meta.establishmentName ||
+        meta.client ||
+        '';
+
+      const firstName = prof?.first_name || meta.first_name || '';
+      const lastName = prof?.last_name || meta.last_name || '';
+      const name =
+        prof?.name ||
+        meta.name ||
+        meta.responsable ||
+        [firstName, lastName].filter(Boolean).join(' ') ||
+        establishmentName ||
+        email;
+
+      const phone = prof?.phone || meta.phone || '';
+      const commune = prof?.commune || meta.commune || '';
+      const address = prof?.address || meta.address || '';
+      const isEmailConfirmed = Boolean(authU?.email_confirmed_at);
+      const emailConfirmedAt = authU?.email_confirmed_at || null;
+      const lastSignInAt = authU?.last_sign_in_at || null;
+      const createdAt = authU?.created_at || prof?.created_at || new Date().toISOString();
+
+      const reminders = Array.isArray(prof?.client_reminders) ? prof.client_reminders : [];
+      const latestRem = [...reminders].sort(
+        (a, b) => new Date(b.opened_at).getTime() - new Date(a.opened_at).getTime()
+      )[0];
+
+      let daysSince = undefined;
+      if (prof?.last_order_at) {
+        daysSince = Math.floor((Date.now() - new Date(prof.last_order_at).getTime()) / (1000 * 60 * 60 * 24));
+      } else if (createdAt) {
+        daysSince = Math.floor((Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24));
+      }
+
+      const isInactive = prof?.status === 'inactive' || (typeof daysSince === 'number' && daysSince >= INACTIVITY_DAYS);
+
+      users.push({
+        id: uid,
+        email,
+        name,
+        first_name: firstName,
+        last_name: lastName,
+        phone,
+        org: establishmentName,
+        establishment_name: establishmentName,
+        establishment_type: prof?.establishment_type || 'Pharmacie / Établissement',
+        commune,
+        address,
+        role,
+        status: isInactive ? 'inactive' : (prof?.status || (isEmailConfirmed ? 'active' : 'pending')),
+        created_at: createdAt,
+        last_order_at: prof?.last_order_at || null,
+        last_reminder_at: prof?.last_reminder_at || null,
+        latest_reminder_status: latestRem?.status,
+        latest_reminder_opened_at: latestRem?.opened_at,
+        latest_reminder_id: latestRem?.id,
+        days_since_last_order: daysSince,
+        is_server_inactive: isInactive,
+        email_confirmed_at: emailConfirmedAt,
+        is_email_confirmed: isEmailConfirmed,
+        last_sign_in_at: lastSignInAt,
+        last_login_at: lastSignInAt,
+      });
+    }
+
+    // Tri par date de création décroissante
+    users.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    // Calcul des statistiques réelles et précises
+    const totalRegistered = users.length;
+    const totalConfirmed = users.filter((u) => u.is_email_confirmed).length;
+    const totalPending = users.filter((u) => !u.is_email_confirmed).length;
+
+    send(res, 200, {
+      success: true,
+      data: {
+        users,
+        stats: {
+          totalRegistered,
+          totalConfirmed,
+          totalPending,
+          totalOnline: null, // Pas de mécanisme de présence par défaut — ne pas inventer
+        },
+      },
+    });
+  } catch (err) {
+    console.error('[CYM Admin] Error in /admin/users:', err);
+    send(res, 500, { success: false, message: err?.message || 'Erreur lors de la récupération des utilisateurs.' });
+  }
 });
 
 router.patch('/admin/users/:id/status', async (req, res) => {

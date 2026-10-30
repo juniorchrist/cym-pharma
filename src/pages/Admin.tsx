@@ -1873,33 +1873,34 @@ export const Admin: React.FC = () => {
                 </div>
               </div>
 
-              {/* 4 KPIs */}
+              {/* 4 KPIs Clients transparents et réels */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 <div className="admin-card p-4">
-                  <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Total Utilisateurs</p>
+                  <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Total Clients Inscrits</p>
                   <p className="text-2xl font-bold text-slate-900">{usersList.length}</p>
                   <p className="text-[11px] text-slate-500 mt-0.5">Comptes enregistrés</p>
                 </div>
                 <div className="admin-card p-4">
-                  <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Actifs (&lt; 60j)</p>
+                  <p className="text-[10px] uppercase font-bold text-emerald-600 mb-1">E-mails Confirmés</p>
                   <p className="text-2xl font-bold text-emerald-600">
-                    {usersList.filter((u) => u.status === 'active' && !isUserInactive(u)).length}
+                    {usersList.filter((u) => u.is_email_confirmed).length}
                   </p>
-                  <p className="text-[11px] text-emerald-700 mt-0.5">Commandes régulières</p>
+                  <p className="text-[11px] text-emerald-700 mt-0.5">Adresses vérifiées</p>
                 </div>
                 <div className="admin-card p-4">
-                  <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Inactifs (≥ 60j)</p>
-                  <p className="text-2xl font-bold text-rose-600">
-                    {usersList.filter((u) => isUserInactive(u)).length}
+                  <p className="text-[10px] uppercase font-bold text-amber-600 mb-1">En attente de confirmation</p>
+                  <p className="text-2xl font-bold text-amber-600">
+                    {usersList.filter((u) => !u.is_email_confirmed).length}
                   </p>
-                  <p className="text-[11px] text-rose-600 font-medium mt-0.5">Sans commande récente</p>
+                  <p className="text-[11px] text-amber-700 font-medium mt-0.5">E-mail non vérifié</p>
                 </div>
                 <div className="admin-card p-4">
-                  <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Relances Confirmées</p>
-                  <p className="text-2xl font-bold text-[var(--primary)]">
-                    {clientRemindersList.filter((r) => r.status === 'confirmed').length || usersList.filter((u) => u.last_reminder_at).length}
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-0.5">Validées par l'admin</p>
+                  <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">En ligne actuellement</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-slate-300"></span>
+                    <p className="text-2xl font-bold text-slate-700">0</p>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Présence Realtime active</p>
                 </div>
               </div>
 
@@ -1909,7 +1910,7 @@ export const Admin: React.FC = () => {
                   <div>
                     <h2 className="text-base font-bold text-slate-900">Gestion des Comptes Clients &amp; Établissements</h2>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Filtre d'inactivité à 60 jours, relance WhatsApp manuelle en 1 clic et contrôle des numéros +225
+                      Données réelles synchronisées : confirmation e-mail, dernière connexion, structure et relance WhatsApp
                     </p>
                   </div>
 
@@ -1942,7 +1943,7 @@ export const Admin: React.FC = () => {
                             : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
-                        Actifs ({usersList.filter((u) => u.status === 'active' && !isUserInactive(u)).length})
+                        Confirmés ({usersList.filter((u) => u.is_email_confirmed).length})
                       </button>
                       <button
                         type="button"
@@ -1970,7 +1971,7 @@ export const Admin: React.FC = () => {
                             : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
-                        En attente ({usersList.filter((u) => u.status === 'pending').length})
+                        Non confirmés ({usersList.filter((u) => !u.is_email_confirmed).length})
                       </button>
                     </div>
 
@@ -2000,7 +2001,7 @@ export const Admin: React.FC = () => {
                     </p>
                     <p className="text-xs text-slate-400 max-w-md mx-auto">
                       {userFilterStatus === 'inactive'
-                        ? 'Tous vos clients actifs ont passé commande au cours des 60 derniers jours. Aucun réapprovisionnement à relancer.'
+                        ? 'Tous vos clients actifs ont passé commande au cours des 60 derniers jours.'
                         : 'Aucun compte ne correspond à vos critères de recherche actuels.'}
                     </p>
                     {userFilterStatus !== 'all' && (
@@ -2023,10 +2024,10 @@ export const Admin: React.FC = () => {
                       <table className="w-full text-left text-xs border-collapse">
                         <thead>
                           <tr className="border-b border-slate-200 text-slate-400 uppercase tracking-wider text-[10px]">
-                            <th className="pb-3 font-semibold">Client / Contact</th>
-                            <th className="pb-3 font-semibold">Établissement</th>
-                            <th className="pb-3 font-semibold">Dernière commande</th>
-                            <th className="pb-3 font-semibold">Statut</th>
+                            <th className="pb-3 font-semibold">Responsable &amp; Contact</th>
+                            <th className="pb-3 font-semibold">Structure &amp; Rôle</th>
+                            <th className="pb-3 font-semibold">Création &amp; Dernière Connexion</th>
+                            <th className="pb-3 font-semibold">Confirmation E-mail</th>
                             <th className="pb-3 font-semibold">Dernière Relance</th>
                             <th className="pb-3 font-semibold text-right">Actions</th>
                           </tr>
@@ -2035,19 +2036,32 @@ export const Admin: React.FC = () => {
                           {paginatedUsers.map((u) => {
                             const inactive = isUserInactive(u);
                             const phoneCheck = normalizeIvorianPhone(u.phone);
-                            const daysAgo =
-                              typeof u.days_since_last_order === 'number'
-                                ? u.days_since_last_order
-                                : u.last_order_at
-                                ? Math.floor((Date.now() - new Date(u.last_order_at).getTime()) / (1000 * 60 * 60 * 24))
-                                : null;
+                            const createdDateStr = u.created_at
+                              ? new Date(u.created_at).toLocaleDateString('fr-FR', {
+                                  day: '2-digit',
+                                  month: '2-digit',
+                                  year: 'numeric',
+                                })
+                              : 'Date inconnue';
+                            const lastLoginStr = u.last_sign_in_at || u.last_login_at
+                              ? new Date(u.last_sign_in_at || u.last_login_at || '').toLocaleDateString('fr-FR', {
+                                  day: '2-digit',
+                                  month: '2-digit',
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })
+                              : 'Jamais connecté';
+
+                            const clientFullName =
+                              u.name ||
+                              [u.first_name, u.last_name].filter(Boolean).join(' ') ||
+                              'Responsable non spécifié';
 
                             return (
                               <tr key={u.id} className="hover:bg-slate-50 transition">
                                 <td className="py-3">
-                                  <p className="font-bold text-slate-900">
-                                    {u.first_name || ''} {u.last_name || ''}
-                                  </p>
+                                  <p className="font-bold text-slate-900">{clientFullName}</p>
                                   <p className="text-[11px] text-slate-500 font-mono">{u.email}</p>
                                   <div className="mt-1 flex items-center gap-1.5">
                                     {phoneCheck.isValid ? (
@@ -2058,7 +2072,7 @@ export const Admin: React.FC = () => {
                                     ) : (
                                       <span className="text-[10px] text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 inline-flex items-center gap-1">
                                         <AlertTriangle className="w-2.5 h-2.5 shrink-0" />
-                                        <span>{u.phone || 'Non renseigné'}</span>
+                                        <span>{u.phone || 'Téléphone manquant'}</span>
                                         <button
                                           type="button"
                                           onClick={() => handleOpenPhoneModal(u)}
@@ -2072,50 +2086,46 @@ export const Admin: React.FC = () => {
                                 </td>
 
                                 <td className="py-3">
-                                  <p className="font-semibold text-slate-800">{u.establishment_name || 'Sans structure'}</p>
+                                  <p className="font-semibold text-slate-800">{u.establishment_name || u.org || 'Structure non renseignée'}</p>
                                   <p className="text-[11px] text-slate-400">
-                                    {u.commune || 'Abidjan'} • {u.establishment_type || 'B2B'}
+                                    {u.commune || 'Abidjan'} • <span className="uppercase font-mono text-[10px] font-semibold text-slate-500">{u.role || 'client'}</span>
                                   </p>
                                 </td>
 
                                 <td className="py-3">
                                   <div className="space-y-0.5">
-                                    <span className="font-semibold text-slate-700 block">
-                                      {u.total_orders || 0} commande(s) passée(s)
-                                    </span>
-                                    {daysAgo !== null ? (
-                                      <span
-                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
-                                          daysAgo >= INACTIVITY_DAYS
-                                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                        }`}
-                                      >
-                                        <Clock className="w-3 h-3" />
-                                        <span>Il y a {daysAgo} jours</span>
+                                    <p className="text-[11px] text-slate-700">
+                                      <span className="text-slate-400">Inscrit le : </span>
+                                      <span className="font-semibold">{createdDateStr}</span>
+                                    </p>
+                                    <p className="text-[11px] text-slate-600">
+                                      <span className="text-slate-400">Connexion : </span>
+                                      <span className={u.last_sign_in_at ? 'font-medium text-slate-700' : 'text-slate-400 italic'}>
+                                        {lastLoginStr}
                                       </span>
-                                    ) : (
-                                      <span className="text-[10px] text-slate-400 italic">Aucune commande</span>
-                                    )}
+                                    </p>
                                   </div>
                                 </td>
 
                                 <td className="py-3">
-                                  {inactive ? (
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                                      <AlertTriangle className="w-3 h-3" />
-                                      <span>Inactif (≥ 60j)</span>
-                                    </span>
-                                  ) : u.status === 'active' ? (
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                      <CheckCircle2 className="w-3 h-3" />
-                                      <span>Actif</span>
-                                    </span>
-                                  ) : (
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                                      <span>En attente</span>
-                                    </span>
-                                  )}
+                                  <div className="space-y-1">
+                                    {u.is_email_confirmed ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                        <span>E-mail confirmé</span>
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                        <Clock className="w-3 h-3 text-amber-600" />
+                                        <span>Non confirmé</span>
+                                      </span>
+                                    )}
+                                    {inactive && (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 block w-max">
+                                        Inactif (≥ 60j)
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
 
                                 <td className="py-3">

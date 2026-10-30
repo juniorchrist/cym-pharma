@@ -30,6 +30,9 @@ export interface User {
   latest_reminder_status?: 'opened' | 'confirmed' | 'cancelled';
   latest_reminder_opened_at?: string;
   latest_reminder_id?: number | string;
+  email_confirmed_at?: string | null;
+  is_email_confirmed?: boolean;
+  last_sign_in_at?: string | null;
 }
 
 export interface ClientReminder {
