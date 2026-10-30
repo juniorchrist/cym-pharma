@@ -31,7 +31,7 @@ SQL Editor -> New query -> coller supabase/seed.sql -> Run
 ## ETAPE 2 — Render : Backend Express
 
 ### 2.1. Nouveau Web Service
-- render.com -> New -> Web Service -> connecter le depot GitHub
+- render.com -> New -> Web Service -> connecter le depot GitHub (`juniorchrist/cym-pharma`)
 - Branche : main
 
 ### 2.2. Configuration du service
@@ -39,25 +39,29 @@ SQL Editor -> New query -> coller supabase/seed.sql -> Run
   Start Command : npm run start:server
   Runtime       : Node
 
-### 2.3. Variables d'environnement Render
-  SUPABASE_URL              = https://votreprojet.supabase.co
-  SUPABASE_SERVICE_ROLE_KEY = eyJ... (service_role - SECRET)
+### 2.3. Variables d'environnement Render (Dashboard > Environment)
+  SUPABASE_URL              = https://kjinefurrybmwcltvqfr.supabase.co
+  SUPABASE_SERVICE_ROLE_KEY = sb_secret_... (votre clé secrète service_role Supabase)
   VITE_FRONTEND_URL         = https://cympharma.infinityfreeapp.com
   PORT                      = 4000
   WHATSAPP_ADMIN_PHONE_1    = 2250707079746
   WHATSAPP_ADMIN_PHONE_2    = 2250707729846
 
-Verification : GET https://cym-pharma-api.onrender.com/api/health
--> {"success":true,"status":"ok","db":true}
+Verification : GET https://cym-pharma.onrender.com/api/health
+-> {"success":true,"status":"ok","db":true,"server":"CYM Pharma API v2.0 (Render)"}
 
 ---
 
 ## ETAPE 3 — Build Frontend
 
-Creez .env.production (ne pas versionner) :
-  VITE_SUPABASE_URL=https://votreprojet.supabase.co
-  VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_xxxxxxx
-  VITE_API_URL=https://cym-pharma-api.onrender.com
+Le fichier `.env.production` est configuré avec :
+  VITE_SUPABASE_URL=https://kjinefurrybmwcltvqfr.supabase.co
+  VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_P-HSrZohnqSPHE-jQSoNIw_QaLjWmcE
+  VITE_API_URL=https://cym-pharma.onrender.com/api
+
+Compilation de production :
+  npm run build
+-> Génère le dossier `dist/` complet optimisé pour InfinityFree.
 
 Puis : npm run build
 -> bundle genere dans dist/

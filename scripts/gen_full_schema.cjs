@@ -24,6 +24,7 @@ const migrationFiles = [
   '20261024000003_rls_security_policies.sql',
   '20261024000004_whatsapp_support.sql',
   '20261024000005_client_reminders.sql',
+  '20261030000001_fix_grants_and_rls_401.sql',
 ];
 
 const sep = function (title) {

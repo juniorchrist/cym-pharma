@@ -25,7 +25,7 @@ import {
   ReminderTemplate,
 } from '../types';
 import { storage } from '../utils/storage';
-import { API_BASE_URL, getApiBaseUrl } from '../config/api';
+import { API_BASE_URL, getApiBaseUrl, buildApiUrl } from '../config/api';
 import { supabase, isSupabaseConfigured } from './supabase';
 
 export { API_BASE_URL };
@@ -35,21 +35,29 @@ async function request<T = unknown>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<ApiResponse<T>> {
-  const token = storage.getAuthToken();
   const headers = new Headers(options.headers || {});
 
   if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
   }
 
-  if (token) {
+  // RÈGLE DE SÉCURITÉ : Les tokens sont transmis uniquement aux routes qui nécessitent une authentification
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const isPublicRoute =
+    cleanEndpoint.startsWith('/products') ||
+    cleanEndpoint.startsWith('/categories') ||
+    cleanEndpoint.startsWith('/health') ||
+    cleanEndpoint.startsWith('/api/health') ||
+    cleanEndpoint.startsWith('/contact') ||
+    cleanEndpoint.startsWith('/auth/login') ||
+    cleanEndpoint.startsWith('/auth/register');
+
+  const token = storage.getAuthToken();
+  if (token && !isPublicRoute) {
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const baseUrl = getApiBaseUrl();
-  const url = endpoint.startsWith('http')
-    ? endpoint
-    : `${baseUrl}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+  const url = buildApiUrl(endpoint);
 
   try {
     const response = await fetch(url, {
@@ -57,7 +65,7 @@ async function request<T = unknown>(
       headers,
     });
 
-    if (response.status === 401) {
+    if (response.status === 401 && !isPublicRoute) {
       storage.removeAuthToken();
       storage.removeUser();
       return {
@@ -219,7 +227,9 @@ export const Products = {
   async list(params: Record<string, string | number> = {}): Promise<ApiResponse<{ products: Product[]; pagination: { total: number } }>> {
     if (isSupabaseConfigured() && supabase) {
       try {
-        let query = supabase.from('products').select('*', { count: 'exact' }).eq('is_active', true).eq('is_published', true);
+        // RÈGLE MÉTIER CYM PHARMA : Le catalogue public interroge la vue public_products
+        // qui exclut strictement ref_price, purchase_cost et stocks du schéma SQL.
+        let query = supabase.from('public_products').select('*', { count: 'exact' });
 
         if (params.category) {
           query = query.ilike('category', `%${params.category}%`);
@@ -229,28 +239,25 @@ export const Products = {
         }
 
         const { data, error, count } = await query;
-        if (error) {
-          return { success: false, message: error.message };
+        if (!error && data) {
+          const sanitizedProducts = data.map((p: any) => ({
+            ...p,
+            ref_price: 0,
+            price: 0,
+            stock: undefined,
+            qty_on_hand: undefined,
+          })) as Product[];
+
+          return {
+            success: true,
+            data: {
+              products: sanitizedProducts,
+              pagination: { total: count ?? sanitizedProducts.length },
+            },
+          };
         }
-
-        // Nettoyer les prix pour l'espace public (règle de confidentialité CYM Pharma)
-        const sanitizedProducts = (data || []).map((p: any) => ({
-          ...p,
-          ref_price: 0,
-          price: 0,
-          stock: undefined,
-          qty_on_hand: undefined,
-        })) as Product[];
-
-        return {
-          success: true,
-          data: {
-            products: sanitizedProducts,
-            pagination: { total: count ?? sanitizedProducts.length },
-          },
-        };
       } catch (err: any) {
-        return { success: false, message: err?.message || 'Erreur de chargement du catalogue' };
+        console.warn('[CYM] Supabase public_products fallback to backend HTTP:', err);
       }
     }
 
@@ -261,16 +268,21 @@ export const Products = {
   async get(id: string | number): Promise<ApiResponse<{ product: Product }>> {
     if (isSupabaseConfigured() && supabase) {
       try {
-        const { data, error } = await supabase.from('products').select('*').eq('id', String(id)).single();
-        if (error || !data) return { success: false, message: 'Produit introuvable' };
-        return {
-          success: true,
-          data: {
-            product: { ...data, ref_price: 0, price: 0 } as Product,
-          },
-        };
+        const { data, error } = await supabase
+          .from('public_products')
+          .select('*')
+          .eq('id', String(id))
+          .single();
+        if (!error && data) {
+          return {
+            success: true,
+            data: {
+              product: { ...data, ref_price: 0, price: 0 } as Product,
+            },
+          };
+        }
       } catch (err: any) {
-        return { success: false, message: err?.message || 'Erreur lors de la récupération du produit' };
+        console.warn('[CYM] Supabase public_products get fallback to backend HTTP:', err);
       }
     }
     return request<{ product: Product }>(`/products/${id}`);
@@ -380,10 +392,11 @@ export const Orders = {
         }
 
         const { data, error } = await query.order('created_at', { ascending: false });
-        if (error) return { success: false, message: error.message };
-        return { success: true, data: { orders: (data || []) as Order[] } };
+        if (!error && data) {
+          return { success: true, data: { orders: (data || []) as Order[] } };
+        }
       } catch (err: any) {
-        return { success: false, message: err?.message || 'Erreur lors du chargement des commandes' };
+        console.warn('[CYM] Supabase orders list fallback to HTTP:', err);
       }
     }
 
@@ -400,12 +413,11 @@ export const Orders = {
           .or(`id.eq.${id},order_number.eq.${id}`)
           .maybeSingle();
 
-        if (error || !data) {
-          return { success: false, message: 'Commande introuvable' };
+        if (!error && data) {
+          return { success: true, data: { order: data as Order } };
         }
-        return { success: true, data: { order: data as Order } };
       } catch (err: any) {
-        return { success: false, message: err?.message || 'Erreur de récupération' };
+        console.warn('[CYM] Supabase orders get fallback to HTTP:', err);
       }
     }
     return request<{ order: Order }>(`/orders/${id}`);
@@ -418,10 +430,9 @@ export const Orders = {
           .from('orders')
           .update({ status: 'Annulée', cancel_reason: reason, cancelled_at: new Date().toISOString() })
           .eq('id', String(id));
-        if (error) return { success: false, message: error.message };
-        return { success: true };
+        if (!error) return { success: true };
       } catch (err: any) {
-        return { success: false, message: err?.message || 'Erreur lors de l\'annulation' };
+        console.warn('[CYM] Supabase orders cancel fallback to HTTP:', err);
       }
     }
     return request<void>(`/orders/${id}/cancel`, {
@@ -470,10 +481,9 @@ export const Users = {
         const currentUser = storage.getUser();
         if (!currentUser?.id) return { success: false, message: 'Non authentifié' };
         const { data, error } = await supabase.from('profiles').select('*').eq('id', currentUser.id).single();
-        if (error) return { success: false, message: error.message };
-        return { success: true, data: { user: data as User } };
+        if (!error && data) return { success: true, data: { user: data as User } };
       } catch (err: any) {
-        return { success: false, message: err?.message };
+        console.warn('[CYM] Supabase profile fallback to HTTP:', err);
       }
     }
     return request<{ user: User }>('/users/profile');

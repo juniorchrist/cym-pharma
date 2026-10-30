@@ -1,30 +1,35 @@
 /**
  * src/config/api.ts
  * ─────────────────────────────────────────────────────────────────────────────
- * Configuration de l'URL de base de l'API backend PHP.
+ * Configuration de l'URL de base de l'API backend Express hébergée sur Render.
  *
- * Priorité (la première valeur non-vide gagne) :
- *  1. Variable d'environnement Vite : VITE_API_URL  (build-time)
- *  2. Override runtime via localStorage['cym_api_url']  (admin seulement)
- *  3. Fallback : http://localhost/bon/api  (développement local XAMPP)
- *
- * Pour changer d'environnement, créez un fichier `.env.local` ou
- * `.env.production` avec VITE_API_URL= ... (voir .env.example).
- * Ne codez JAMAIS une URL en dur dans le code source.
+ * Configuration attendue en production :
+ *   VITE_API_URL=https://cym-pharma.onrender.com/api
  */
 
-const ENV_API_URL = import.meta.env.VITE_API_URL as string | undefined;
+const DEFAULT_PROD_API_URL = 'https://cym-pharma.onrender.com/api';
 
-export const API_BASE_URL: string =
-  ENV_API_URL?.trim() || 'http://localhost/bon/api';
+const ENV_API_URL = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+
+export const API_BASE_URL: string = (ENV_API_URL || DEFAULT_PROD_API_URL).replace(/\/+$/, '');
 
 /**
- * Résout dynamiquement l'URL de l'API à chaque requête :
- *  1. Vérifie d'abord VITE_API_URL (injecté au moment du build).
- *  2. Vérifie si un override admin est défini dans localStorage['cym_api_url'].
- *  3. Retourne sinon API_BASE_URL.
+ * Résout dynamiquement l'URL de base de l'API à chaque requête :
+ *  - En production (build production ou domaine distant comme infinityfreeapp.com) :
+ *    Utilise TOUJOURS l'URL officielle configurée (aucun override localStorage permis).
+ *  - En développement local strict (localhost / 127.0.0.1) :
+ *    Permet si nécessaire un override local.
  */
 export function getApiBaseUrl(): string {
+  const isLocalhost =
+    typeof window !== 'undefined' &&
+    ['localhost', '127.0.0.1'].includes(window.location.hostname);
+
+  // En production ou sur un domaine hébergé : URL officielle stricte
+  if (import.meta.env.PROD || !isLocalhost) {
+    return API_BASE_URL;
+  }
+
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       const customUrl = window.localStorage.getItem('cym_api_url');
@@ -33,7 +38,40 @@ export function getApiBaseUrl(): string {
       }
     }
   } catch {
-    // Accès localStorage bloqué (mode privé strict, etc.)
+    // Mode privé strict
   }
+
   return API_BASE_URL;
+}
+
+/**
+ * Construit une URL propre sans jamais doubler le segment /api :
+ * ex: buildApiUrl('/api/health') => 'https://cym-pharma.onrender.com/api/health'
+ * ex: buildApiUrl('/health')     => 'https://cym-pharma.onrender.com/api/health'
+ * ex: buildApiUrl('/orders')     => 'https://cym-pharma.onrender.com/api/orders'
+ */
+export function buildApiUrl(endpoint: string): string {
+  if (endpoint.startsWith('http://') || endpoint.startsWith('https://')) {
+    return endpoint;
+  }
+
+  const base = getApiBaseUrl().replace(/\/+$/, '');
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+
+  // Si la base se termine déjà par /api et que l'endpoint commence par /api/
+  if (base.endsWith('/api') && cleanEndpoint.startsWith('/api/')) {
+    return `${base}${cleanEndpoint.slice(4)}`;
+  }
+
+  // Si l'endpoint est exactement '/api'
+  if (base.endsWith('/api') && cleanEndpoint === '/api') {
+    return base;
+  }
+
+  // Si la base ne se termine PAS par /api et que l'endpoint ne commence PAS par /api/
+  if (!base.endsWith('/api') && !cleanEndpoint.startsWith('/api/')) {
+    return `${base}/api${cleanEndpoint}`;
+  }
+
+  return `${base}${cleanEndpoint}`;
 }
