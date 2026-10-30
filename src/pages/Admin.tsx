@@ -49,6 +49,7 @@ import { useToast } from '../context/ToastContext';
 import { formatCurrency } from '../utils/currency';
 import { storage } from '../utils/storage';
 import { Admin as AdminApi } from '../services/api';
+import { supabase, isSupabaseConfigured } from '../services/supabase';
 import { Order, Product, User, OrderPricingSummary, PricingLine, RelanceLog, ClientReminder, ReminderTemplate } from '../types';
 import { normalizeIvorianPhone, buildWhatsAppLink } from '../utils/phone';
 import {
@@ -250,6 +251,31 @@ export const Admin: React.FC = () => {
     loadUsers();
     loadClientReminders();
     loadTemplates();
+
+    // Souscription Supabase Realtime pour actualiser instantanément les commandes dès qu'une commande arrive
+    let channel: any = null;
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        channel = supabase
+          .channel('admin-orders-realtime')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'orders' },
+            () => {
+              loadOrders();
+            }
+          )
+          .subscribe();
+      } catch (rtErr) {
+        console.warn('[Admin] Realtime subscription notice:', rtErr);
+      }
+    }
+
+    return () => {
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
+    };
   }, []);
 
   // Détection du retour sur l'onglet pour la barre de confirmation

@@ -510,15 +510,53 @@ router.get('/admin/orders', async (req, res) => {
   const { status, limit = 100, offset = 0 } = req.query;
   let query = db
     .from('orders')
-    .select('*, items:order_items(*), client:profiles(name, email, phone, establishment_name)')
+    .select('*, items:order_items(*)')
     .order('created_at', { ascending: false })
     .range(Number(offset), Number(offset) + Number(limit) - 1);
 
   if (status) query = query.eq('status', String(status));
 
-  const { data, error } = await query;
+  const { data: rawOrders, error } = await query;
   if (error) { send(res, 500, { success: false, message: error.message }); return; }
-  send(res, 200, { success: true, data: { orders: data || [] } });
+
+  // Enrichir avec les profils clients
+  const userIds = Array.from(new Set((rawOrders || []).map((o) => o.user_id).filter(Boolean)));
+  let profileMap = new Map();
+
+  if (userIds.length > 0) {
+    const { data: profiles } = await db
+      .from('profiles')
+      .select('id, name, first_name, last_name, email, phone, establishment_name, commune, address')
+      .in('id', userIds);
+
+    if (profiles) {
+      profileMap = new Map(profiles.map((p) => [p.id, p]));
+    }
+  }
+
+  const enrichedOrders = (rawOrders || []).map((o) => {
+    const prof = o.user_id ? profileMap.get(o.user_id) : null;
+    const items = Array.isArray(o.items) ? o.items : [];
+    const clientName =
+      prof?.name ||
+      [prof?.first_name, prof?.last_name].filter(Boolean).join(' ') ||
+      o.establishment_name ||
+      'Client CYM Pharma';
+
+    return {
+      ...o,
+      orderNumber: o.order_number || o.id,
+      order_number: o.order_number || o.id,
+      item_count: items.length,
+      client: prof || null,
+      client_name: clientName,
+      client_email: prof?.email || null,
+      client_phone: prof?.phone || null,
+      establishment_name: o.establishment_name || prof?.establishment_name || '',
+    };
+  });
+
+  send(res, 200, { success: true, data: { orders: enrichedOrders } });
 });
 
 router.get('/admin/orders/:id/pricing', async (req, res) => {
@@ -526,22 +564,76 @@ router.get('/admin/orders/:id/pricing', async (req, res) => {
   if (!adminId) return;
   const { data: order, error } = await db.from('orders').select('*, items:order_items(*)').eq('id', req.params.id).maybeSingle();
   if (error || !order) { send(res, 404, { success: false, message: 'Commande introuvable.' }); return; }
-  const total = (order.items || []).reduce((acc, it) => acc + (Number(it.unit_price) || 0) * (Number(it.quantity) || 1), 0);
-  send(res, 200, { success: true, data: { order, pricingSummary: { totalAmount: total, currency: 'FCFA' } } });
+
+  const items = Array.isArray(order.items) ? order.items : [];
+  const productIds = items.map((it) => it.product_id).filter(Boolean);
+  let refPriceMap = new Map();
+
+  if (productIds.length > 0) {
+    const { data: prods } = await db.from('products').select('id, ref_price').in('id', productIds);
+    if (prods) {
+      refPriceMap = new Map(prods.map((p) => [String(p.id), Number(p.ref_price) || 0]));
+    }
+  }
+
+  const lines = items.map((it) => {
+    const refPrice = refPriceMap.get(String(it.product_id)) ?? 0;
+    const currentUnitPrice = Number(it.unit_price) || 0;
+    const unitPrice = currentUnitPrice > 0 ? currentUnitPrice : refPrice;
+    const qty = Number(it.quantity) || 1;
+    const lineTotal = unitPrice * qty;
+
+    return {
+      productId: it.product_id || it.id,
+      name: it.name || 'Dispositif médical',
+      reference: it.reference || '',
+      unit: it.unit || 'Unité',
+      quantity: qty,
+      ref_price: refPrice > 0 ? refPrice : null,
+      unit_price: currentUnitPrice > 0 ? currentUnitPrice : (refPrice > 0 ? refPrice : null),
+      line_total: lineTotal > 0 ? lineTotal : null,
+      missing_price: unitPrice <= 0,
+    };
+  });
+
+  const totalQuantity = lines.reduce((acc, l) => acc + l.quantity, 0);
+  const totalAmount = lines.reduce((acc, l) => acc + (l.line_total || 0), 0);
+  const hasMissingPrices = lines.some((l) => l.missing_price);
+
+  const pricingSummary = {
+    orderId: order.id,
+    orderNumber: order.order_number || order.id,
+    status: order.status,
+    client: order.establishment_name || 'Établissement',
+    lines,
+    totalQuantity,
+    totalAmount: totalAmount > 0 ? totalAmount : null,
+    hasMissingPrices,
+    canValidate: !hasMissingPrices && totalAmount > 0,
+    pricedAt: order.priced_at,
+  };
+
+  send(res, 200, { success: true, data: { order, pricingSummary } });
 });
 
 router.post('/admin/orders/:id/save-pricing', async (req, res) => {
   const adminId = await requireAdmin(req, res);
   if (!adminId) return;
   const { items } = req.body;
+  let total = 0;
   if (Array.isArray(items)) {
     for (const it of items) {
       if (it.productId) {
-        await db.from('order_items').update({ unit_price: it.unit_price }).eq('order_id', req.params.id).eq('product_id', it.productId);
+        const uPrice = Number(it.unit_price) || 0;
+        await db.from('order_items').update({ unit_price: uPrice }).eq('order_id', req.params.id).or(`product_id.eq.${it.productId},id.eq.${it.productId}`);
       }
     }
   }
   const { data: order } = await db.from('orders').select('*, items:order_items(*)').eq('id', req.params.id).maybeSingle();
+  if (order && Array.isArray(order.items)) {
+    total = order.items.reduce((acc, it) => acc + (Number(it.unit_price) || 0) * (Number(it.quantity) || 1), 0);
+    await db.from('orders').update({ total, subtotal: total, updated_at: new Date().toISOString() }).eq('id', req.params.id);
+  }
   send(res, 200, { success: true, data: { order } });
 });
 
@@ -553,22 +645,25 @@ router.post('/admin/orders/:id/validate-pricing', async (req, res) => {
   if (Array.isArray(items)) {
     for (const it of items) {
       if (it.productId) {
-        await db.from('order_items').update({ unit_price: it.unit_price }).eq('order_id', req.params.id).eq('product_id', it.productId);
-        total += (Number(it.unit_price) || 0) * (Number(it.quantity) || 1);
+        const uPrice = Number(it.unit_price) || 0;
+        await db.from('order_items').update({ unit_price: uPrice }).eq('order_id', req.params.id).or(`product_id.eq.${it.productId},id.eq.${it.productId}`);
+        total += uPrice * (Number(it.quantity) || 1);
       }
     }
   }
   const now = new Date().toISOString();
-  await db.from('orders').update({ status: 'Devis envoyé', total_amount: total, updated_at: now }).eq('id', req.params.id);
+  const invoiceNum = `FAC-${String(req.params.id).replace('CMD-', '')}`;
+  await db.from('orders').update({ status: 'Devis envoyé', total: total, subtotal: total, invoice_number: invoiceNum, invoice_date: now, priced_at: now, updated_at: now }).eq('id', req.params.id);
   await db.from('order_status_history').insert({
     order_id: req.params.id,
     status: 'Devis envoyé',
-    note: `Devis validé (${total} FCFA)`,
+    note: `Chiffrage validé : ${total} FCFA`,
     changed_by: adminId,
   });
   const { data: order } = await db.from('orders').select('*, items:order_items(*)').eq('id', req.params.id).maybeSingle();
   send(res, 200, { success: true, data: { order } });
 });
+
 
 const handleOrderStatusChange = async (req, res) => {
   const adminId = await requireAdmin(req, res);

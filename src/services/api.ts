@@ -271,11 +271,30 @@ export const Auth = {
           id: authData.user.id,
           email: authData.user.email || payload.email,
           name: payload.name || `${payload.first_name || ''} ${payload.last_name || ''}`.trim(),
+          first_name: payload.first_name,
+          last_name: payload.last_name,
           role: 'client',
           establishment_name: payload.establishment_name,
           phone: payload.phone,
           status: 'pending',
         };
+
+        // Sauvegarde proactive du profil dans public.profiles
+        try {
+          await supabase.from('profiles').upsert({
+            id: authData.user.id,
+            email: user.email,
+            name: user.name,
+            first_name: payload.first_name || null,
+            last_name: payload.last_name || null,
+            role: 'client',
+            establishment_name: payload.establishment_name || null,
+            phone: payload.phone || null,
+            status: 'active',
+          }, { onConflict: 'id' });
+        } catch (profErr) {
+          console.warn('[CYM] Direct profile upsert notice:', profErr);
+        }
 
         if (token) {
           storage.setAuthToken(token);
@@ -524,15 +543,32 @@ export const Orders = {
     if (isSupabaseConfigured() && supabase) {
       try {
         const user = storage.getUser();
+        const sessionRes = await supabase.auth.getSession();
+        const activeUserId = sessionRes.data?.session?.user?.id || user?.id;
+
         let query = supabase.from('orders').select('*, items:order_items(*)');
 
-        if (user?.role !== 'admin' && user?.id) {
-          query = query.eq('user_id', user.id);
+        if (user?.role !== 'admin' && activeUserId) {
+          query = query.eq('user_id', activeUserId);
         }
 
         const { data, error } = await query.order('created_at', { ascending: false });
         if (!error && data) {
-          return { success: true, data: { orders: (data || []) as Order[] } };
+          const mappedOrders: Order[] = data.map((o: any) => ({
+            ...o,
+            orderNumber: o.order_number || o.id,
+            order_number: o.order_number || o.id,
+            item_count: (o.items || []).length,
+            items: (o.items || []).map((it: any) => ({
+              ...it,
+              productId: it.product_id || it.id,
+              product_id: it.product_id || it.id,
+              quantity: Number(it.quantity) || 1,
+              unit_price: Number(it.unit_price) || 0,
+              line_total: Number(it.line_total) || 0,
+            })),
+          }));
+          return { success: true, data: { orders: mappedOrders } };
         }
       } catch (err: any) {
         console.warn('[CYM] Supabase orders list fallback to HTTP:', err);
@@ -553,7 +589,21 @@ export const Orders = {
           .maybeSingle();
 
         if (!error && data) {
-          return { success: true, data: { order: data as Order } };
+          const mappedOrder: Order = {
+            ...data,
+            orderNumber: data.order_number || data.id,
+            order_number: data.order_number || data.id,
+            item_count: (data.items || []).length,
+            items: (data.items || []).map((it: any) => ({
+              ...it,
+              productId: it.product_id || it.id,
+              product_id: it.product_id || it.id,
+              quantity: Number(it.quantity) || 1,
+              unit_price: Number(it.unit_price) || 0,
+              line_total: Number(it.line_total) || 0,
+            })),
+          };
+          return { success: true, data: { order: mappedOrder } };
         }
       } catch (err: any) {
         console.warn('[CYM] Supabase orders get fallback to HTTP:', err);
@@ -1008,11 +1058,180 @@ export const Admin = {
   },
 
   async orders(params: Record<string, string | number> = {}): Promise<ApiResponse<{ orders: Order[] }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        let query = supabase
+          .from('orders')
+          .select('*, items:order_items(*)');
+
+        if (params.status) {
+          query = query.eq('status', String(params.status));
+        }
+
+        const { data: rawOrders, error } = await query.order('created_at', { ascending: false });
+
+        if (!error && rawOrders) {
+          // Enrichir avec les profils clients (puisque user_id lie auth.users)
+          const userIds = Array.from(new Set(rawOrders.map((o: any) => o.user_id).filter(Boolean)));
+          let profileMap = new Map<string, any>();
+
+          if (userIds.length > 0) {
+            const { data: profiles } = await supabase
+              .from('profiles')
+              .select('id, name, first_name, last_name, email, phone, establishment_name, commune, address')
+              .in('id', userIds);
+
+            if (profiles) {
+              profileMap = new Map(profiles.map((p) => [p.id, p]));
+            }
+          }
+
+          const enrichedOrders: Order[] = rawOrders.map((o: any) => {
+            const prof = o.user_id ? profileMap.get(o.user_id) : null;
+            const items = Array.isArray(o.items) ? o.items : [];
+            const clientName =
+              prof?.name ||
+              [prof?.first_name, prof?.last_name].filter(Boolean).join(' ') ||
+              o.establishment_name ||
+              'Client CYM Pharma';
+
+            return {
+              id: o.id,
+              order_number: o.order_number || o.id,
+              orderNumber: o.order_number || o.id,
+              user_id: o.user_id,
+              userId: o.user_id,
+              establishment_name: o.establishment_name || prof?.establishment_name || '',
+              shipping_address: o.shipping_address || prof?.address || '',
+              shipping_city: o.shipping_city || prof?.commune || 'Abidjan',
+              shipping_notes: o.shipping_notes || '',
+              status: o.status || 'En attente de chiffrage',
+              notes: o.notes || '',
+              subtotal: Number(o.subtotal) || 0,
+              total: Number(o.total) || 0,
+              currency: o.currency || 'FCFA',
+              invoice_number: o.invoice_number,
+              invoice_date: o.invoice_date,
+              priced_at: o.priced_at,
+              shipped_at: o.shipped_at,
+              delivered_at: o.delivered_at,
+              cancelled_at: o.cancelled_at,
+              cancel_reason: o.cancel_reason,
+              created_at: o.created_at,
+              updated_at: o.updated_at,
+              item_count: items.length,
+              items: items.map((it: any) => ({
+                id: it.id,
+                order_id: it.order_id,
+                productId: it.product_id,
+                product_id: it.product_id,
+                reference: it.reference,
+                name: it.name,
+                unit: it.unit,
+                conditionnement: it.conditionnement,
+                quantity: Number(it.quantity) || 1,
+                unit_price: Number(it.unit_price) || 0,
+                unitPrice: Number(it.unit_price) || 0,
+                line_total: Number(it.line_total) || 0,
+                currency: it.currency || 'FCFA',
+              })),
+              client: prof
+                ? {
+                    id: prof.id,
+                    name: clientName,
+                    email: prof.email,
+                    phone: prof.phone,
+                    establishment_name: prof.establishment_name,
+                  }
+                : undefined,
+              client_name: clientName,
+              client_email: prof?.email || undefined,
+              client_phone: prof?.phone || undefined,
+            } as Order;
+          });
+
+          return { success: true, data: { orders: enrichedOrders } };
+        }
+      } catch (err) {
+        console.warn('[CYM] Supabase Admin.orders fallback to HTTP:', err);
+      }
+    }
+
     const query = new URLSearchParams(params as Record<string, string>).toString();
     return request<{ orders: Order[] }>(`/admin/orders${query ? `?${query}` : ''}`);
   },
 
   async getOrderPricing(orderId: string | number): Promise<ApiResponse<{ order: Order; pricingSummary: OrderPricingSummary }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data: order, error } = await supabase
+          .from('orders')
+          .select('*, items:order_items(*)')
+          .eq('id', String(orderId))
+          .maybeSingle();
+
+        if (!error && order) {
+          const items = Array.isArray(order.items) ? order.items : [];
+
+          // Récupérer les prix de référence depuis la table products pour pré-remplissage
+          const productIds = items.map((it: any) => it.product_id).filter(Boolean);
+          let refPriceMap = new Map<string, number>();
+
+          if (productIds.length > 0) {
+            const { data: prods } = await supabase
+              .from('products')
+              .select('id, ref_price')
+              .in('id', productIds);
+
+            if (prods) {
+              refPriceMap = new Map(prods.map((p) => [String(p.id), Number(p.ref_price) || 0]));
+            }
+          }
+
+          const lines: PricingLine[] = items.map((it: any) => {
+            const refPrice = refPriceMap.get(String(it.product_id)) ?? 0;
+            const currentUnitPrice = Number(it.unit_price) || 0;
+            const unitPrice = currentUnitPrice > 0 ? currentUnitPrice : refPrice;
+            const qty = Number(it.quantity) || 1;
+            const lineTotal = unitPrice * qty;
+
+            return {
+              productId: it.product_id || it.id,
+              name: it.name || 'Dispositif médical',
+              reference: it.reference || '',
+              unit: it.unit || 'Unité',
+              quantity: qty,
+              ref_price: refPrice > 0 ? refPrice : null,
+              unit_price: currentUnitPrice > 0 ? currentUnitPrice : (refPrice > 0 ? refPrice : null),
+              line_total: lineTotal > 0 ? lineTotal : null,
+              missing_price: unitPrice <= 0,
+            };
+          });
+
+          const totalQuantity = lines.reduce((acc, l) => acc + l.quantity, 0);
+          const totalAmount = lines.reduce((acc, l) => acc + (l.line_total || 0), 0);
+          const hasMissingPrices = lines.some((l) => l.missing_price);
+
+          const pricingSummary: OrderPricingSummary = {
+            orderId: order.id,
+            orderNumber: order.order_number || order.id,
+            status: order.status,
+            client: order.establishment_name || 'Établissement',
+            lines,
+            totalQuantity,
+            totalAmount: totalAmount > 0 ? totalAmount : null,
+            hasMissingPrices,
+            canValidate: !hasMissingPrices && totalAmount > 0,
+            pricedAt: order.priced_at,
+          };
+
+          return { success: true, data: { order: order as Order, pricingSummary } };
+        }
+      } catch (err) {
+        console.warn('[CYM] Supabase Admin.getOrderPricing fallback to HTTP:', err);
+      }
+    }
+
     return request<{ order: Order; pricingSummary: OrderPricingSummary }>(`/admin/orders/${orderId}/pricing`);
   },
 
@@ -1020,6 +1239,53 @@ export const Admin = {
     orderId: string | number,
     items: { productId: string | number; unit_price: number; reference?: string }[]
   ): Promise<ApiResponse<{ order: Order }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        let computedTotal = 0;
+
+        for (const item of items) {
+          const unitPrice = Number(item.unit_price) || 0;
+          // Trouver la ligne de commande correspondante
+          const { data: itemRows } = await supabase
+            .from('order_items')
+            .select('id, quantity')
+            .eq('order_id', String(orderId))
+            .or(`product_id.eq.${item.productId},id.eq.${item.productId}`);
+
+          if (itemRows && itemRows.length > 0) {
+            for (const row of itemRows) {
+              const lineTotal = unitPrice * (Number(row.quantity) || 1);
+              computedTotal += lineTotal;
+              await supabase
+                .from('order_items')
+                .update({ unit_price: unitPrice, line_total: lineTotal })
+                .eq('id', row.id);
+            }
+          }
+        }
+
+        // Mettre à jour la commande
+        await supabase
+          .from('orders')
+          .update({
+            subtotal: computedTotal,
+            total: computedTotal,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', String(orderId));
+
+        const { data: updatedOrder } = await supabase
+          .from('orders')
+          .select('*, items:order_items(*)')
+          .eq('id', String(orderId))
+          .single();
+
+        return { success: true, data: { order: updatedOrder as Order } };
+      } catch (err: any) {
+        console.warn('[CYM] Supabase saveOrderPricing fallback to HTTP:', err);
+      }
+    }
+
     return request<{ order: Order }>(`/admin/orders/${orderId}/save-pricing`, {
       method: 'POST',
       body: JSON.stringify({ items }),
@@ -1030,6 +1296,67 @@ export const Admin = {
     orderId: string | number,
     items: { productId: string | number; unit_price: number; reference?: string }[]
   ): Promise<ApiResponse<{ order: Order }>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        let computedTotal = 0;
+
+        for (const item of items) {
+          const unitPrice = Number(item.unit_price) || 0;
+          const { data: itemRows } = await supabase
+            .from('order_items')
+            .select('id, quantity')
+            .eq('order_id', String(orderId))
+            .or(`product_id.eq.${item.productId},id.eq.${item.productId}`);
+
+          if (itemRows && itemRows.length > 0) {
+            for (const row of itemRows) {
+              const lineTotal = unitPrice * (Number(row.quantity) || 1);
+              computedTotal += lineTotal;
+              await supabase
+                .from('order_items')
+                .update({ unit_price: unitPrice, line_total: lineTotal })
+                .eq('id', row.id);
+            }
+          }
+        }
+
+        const now = new Date().toISOString();
+        const invoiceNum = `FAC-${String(orderId).replace('CMD-', '')}`;
+
+        await supabase
+          .from('orders')
+          .update({
+            status: 'Devis envoyé',
+            subtotal: computedTotal,
+            total: computedTotal,
+            priced_at: now,
+            invoice_number: invoiceNum,
+            invoice_date: now,
+            updated_at: now,
+          })
+          .eq('id', String(orderId));
+
+        // Enregistrer dans l'historique
+        const userRes = await supabase.auth.getUser();
+        await supabase.from('order_status_history').insert({
+          order_id: String(orderId),
+          status: 'Devis envoyé',
+          note: `Chiffrage validé : ${computedTotal} FCFA`,
+          changed_by: userRes.data.user?.id || null,
+        });
+
+        const { data: updatedOrder } = await supabase
+          .from('orders')
+          .select('*, items:order_items(*)')
+          .eq('id', String(orderId))
+          .single();
+
+        return { success: true, data: { order: updatedOrder as Order } };
+      } catch (err: any) {
+        console.warn('[CYM] Supabase validateOrderPricing fallback to HTTP:', err);
+      }
+    }
+
     return request<{ order: Order }>(`/admin/orders/${orderId}/validate-pricing`, {
       method: 'POST',
       body: JSON.stringify({ items }),
@@ -1037,6 +1364,39 @@ export const Admin = {
   },
 
   async updateOrderStatus(id: string | number, status: string): Promise<ApiResponse<void>> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const updatePayload: Record<string, any> = {
+          status,
+          updated_at: new Date().toISOString(),
+        };
+
+        if (status === 'Livrée' || status === 'delivered') {
+          updatePayload.delivered_at = new Date().toISOString();
+        } else if (status === 'Expédiée' || status === 'shipped') {
+          updatePayload.shipped_at = new Date().toISOString();
+        }
+
+        const { error } = await supabase
+          .from('orders')
+          .update(updatePayload)
+          .eq('id', String(id));
+
+        if (!error) {
+          const userRes = await supabase.auth.getUser();
+          await supabase.from('order_status_history').insert({
+            order_id: String(id),
+            status,
+            note: `Statut mis à jour par l'administrateur`,
+            changed_by: userRes.data.user?.id || null,
+          });
+          return { success: true };
+        }
+      } catch (err) {
+        console.warn('[CYM] Supabase updateOrderStatus fallback to HTTP:', err);
+      }
+    }
+
     return request<void>(`/admin/orders/${id}/status`, {
       method: 'PUT',
       body: JSON.stringify({ status }),

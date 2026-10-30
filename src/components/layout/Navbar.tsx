@@ -14,6 +14,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
 import { useScrolled } from '../../hooks/useScrolled';
+import { storage } from '../../utils/storage';
 
 /* ─── Utilitaire : initiales de l'utilisateur ─── */
 function getInitials(user: { name?: string; establishment_name?: string; org?: string; email?: string } | null): string {
@@ -218,6 +219,15 @@ export const Navbar: React.FC = () => {
     navigate('/connexion');
   }, [logout, navigate]);
 
+  const handleCartClick = useCallback(() => {
+    if (!isAuthenticated) {
+      storage.setRedirectAfterLogin('/commande');
+      navigate('/connexion');
+      return;
+    }
+    openDrawer();
+  }, [isAuthenticated, openDrawer, navigate]);
+
   return (
     <>
       <header className="fixed inset-x-0 top-0 z-50">
@@ -281,7 +291,7 @@ export const Navbar: React.FC = () => {
               {/* ── Panier (mobile + desktop) ── */}
               <button
                 type="button"
-                onClick={openDrawer}
+                onClick={handleCartClick}
                 id="nav-cart-btn"
                 aria-label={`Panier (${cartCount} article${cartCount > 1 ? 's' : ''})`}
                 className="nav-icon-btn relative"

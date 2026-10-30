@@ -37,17 +37,23 @@ export const Commande: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [confirmedOrderNumber, setConfirmedOrderNumber] = useState('');
+  const isSubmittingRef = React.useRef(false);
 
   const totalCount = count();
 
   const handleSendOrder = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (loading || isSubmittingRef.current) {
+      return;
+    }
+
     if (items.length === 0) {
       showToast('Votre panier est vide.', 'warning');
       return;
     }
 
+    isSubmittingRef.current = true;
     setLoading(true);
 
     const payload = {
@@ -129,6 +135,9 @@ export const Commande: React.FC = () => {
       showToast(err?.message || 'Erreur technique lors de la transmission de la commande.', 'error');
     } finally {
       setLoading(false);
+      setTimeout(() => {
+        isSubmittingRef.current = false;
+      }, 800);
     }
   };
 

@@ -60,9 +60,11 @@ export const AdminLockModal: React.FC<AdminLockModalProps> = ({
         if (onSuccess) {
           onSuccess();
         } else {
+          // Délai suffisant pour que onAuthStateChange mette à jour le state
+          // avant que AdminRoute vérifie les droits.
           setTimeout(() => {
             navigate('/admin');
-          }, 50);
+          }, 600);
         }
       } else {
         setLoading(false);

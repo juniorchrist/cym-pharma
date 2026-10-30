@@ -99,33 +99,33 @@ export const Dashboard: React.FC = () => {
   const totalInvoiced = orders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
   const invoicedCount = orders.filter((o) => (Number(o.total) || 0) > 0 || o.invoice_number || o.status === 'Facture disponible').length;
 
+  const [ordersLoading, setOrdersLoading] = useState(true);
+
   useEffect(() => {
-    (async () => {
+    let isMounted = true;
+    const fetchOrders = async () => {
+      setOrdersLoading(true);
       try {
         const res = await Orders.list();
-        if (res.success && res.data?.orders && res.data.orders.length > 0) {
-          setOrders(res.data.orders);
-          return;
+        if (isMounted) {
+          if (res.success && Array.isArray(res.data?.orders)) {
+            setOrders(res.data.orders);
+          } else {
+            setOrders([]);
+          }
         }
       } catch (err) {
-        console.warn('Orders.list fallback:', err);
+        console.warn('Orders.list error:', err);
+        if (isMounted) setOrders([]);
+      } finally {
+        if (isMounted) setOrdersLoading(false);
       }
+    };
 
-      try {
-        const recent = storage.getBLCurrentOrder();
-        if (recent && (recent.orderNumber || recent.id)) {
-          const recentId = recent.orderNumber || recent.id;
-          setOrders((prev) => {
-            if (prev.some((o) => (o.orderNumber || o.id) === recentId)) {
-              return prev;
-            }
-            return [recent, ...prev];
-          });
-        }
-      } catch (e) {
-        console.warn('Could not load recent orders', e);
-      }
-    })();
+    fetchOrders();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const switchPanel = (panel: PanelKey) => {
@@ -186,10 +186,21 @@ export const Dashboard: React.FC = () => {
     setUrgentInput('');
   };
 
+  const isOrderPending = (status: string) => {
+    const s = (status || '').toLowerCase();
+    return s.includes('chiffrer') || s.includes('attente') || s === 'pending' || s === 'processing' || s === 'shipped' || s.includes('cours');
+  };
+
+  const isOrderDelivered = (status: string) => {
+    const s = (status || '').toLowerCase();
+    return s === 'delivered' || s.includes('livrée') || s.includes('livree');
+  };
+
   const filteredOrders = orders.filter((o) => {
     if (statusFilter === 'all') return true;
-    if (statusFilter === 'pending') return o.status === 'pending' || o.status === 'processing';
-    return o.status === statusFilter;
+    if (statusFilter === 'pending') return isOrderPending(o.status || '');
+    if (statusFilter === 'delivered') return isOrderDelivered(o.status || '');
+    return (o.status || '').toLowerCase() === statusFilter.toLowerCase();
   });
 
   const displayOrg = profOrg || '';
@@ -382,9 +393,11 @@ export const Dashboard: React.FC = () => {
                       </span>
                     </div>
                     <p className="text-2xl font-bold text-slate-900 tracking-tight" id="stat-pending">
-                      {orders.filter((o) => o.status === 'shipped' || o.status === 'pending').length}
+                      {orders.filter((o) => isOrderPending(o.status || '')).length}
                     </p>
-                    <p className="text-[11px] text-amber-700 font-medium mt-0.5">1 en acheminement</p>
+                    <p className="text-[11px] text-amber-700 font-medium mt-0.5">
+                      {orders.filter((o) => isOrderPending(o.status || '')).length} en traitement
+                    </p>
                   </div>
 
                   <div className="dash-card p-4 sm:p-5">
@@ -397,7 +410,7 @@ export const Dashboard: React.FC = () => {
                       </span>
                     </div>
                     <p className="text-2xl font-bold text-slate-900 tracking-tight" id="stat-delivered">
-                      {orders.filter((o) => o.status === 'delivered').length}
+                      {orders.filter((o) => isOrderDelivered(o.status || '')).length}
                     </p>
                     <p className="text-[11px] text-emerald-700 font-medium mt-0.5">Réceptionnées</p>
                   </div>
