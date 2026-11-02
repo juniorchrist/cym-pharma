@@ -94,7 +94,7 @@ EXCEPTION
     RAISE NOTICE 'Notice: orders_status_check constraint setup note: %', SQLERRM;
 END $$;
 
--- 5. RPC Chiffrage Atomique d'une Commande (admin_quote_order)
+-- 5. RPC Chiffrage Atomique d'une Commande (admin_quote_order) — Le chiffrage admin vaut confirmation
 CREATE OR REPLACE FUNCTION public.admin_quote_order(
   p_order_id TEXT,
   p_items JSONB
@@ -184,7 +184,7 @@ BEGIN
   VALUES (
     p_order_id,
     'quoted',
-    'Chiffrage validé par administrateur : ' || v_computed_total || ' FCFA',
+    'Chiffrage validé par administrateur (Commande confirmée) : ' || v_computed_total || ' FCFA',
     auth.uid(),
     v_now
   );
@@ -274,3 +274,4 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 GRANT EXECUTE ON FUNCTION public.admin_get_clients() TO authenticated, service_role;
+

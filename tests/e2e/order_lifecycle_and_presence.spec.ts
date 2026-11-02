@@ -79,3 +79,4 @@ test.describe('CYM Pharma — E2E Tests Critiques', () => {
     }
   });
 });
+

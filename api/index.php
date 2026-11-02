@@ -331,13 +331,30 @@ if (preg_match('#^/admin/orders/([^/]+)/quote$#', $path, $matches) && $method ==
         $pdo->commit();
         json_response([
             'success' => true,
-            'message' => 'Chiffrage validé et enregistré avec succès.',
+            'message' => 'Chiffrage validé et enregistré avec succès. Commande confirmée.',
             'total'   => $total,
             'status'  => 'quoted',
         ]);
     } catch (Exception $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         json_error("Erreur lors de l'enregistrement du chiffrage.", 500);
+    }
+}
+
+// 9. Mise à jour du statut d'une commande : PUT / POST / PATCH /admin/orders/{id}/status
+if (preg_match('#^/admin/orders/([^/]+)/status$#', $path, $matches) && in_array($method, ['POST', 'PUT', 'PATCH'])) {
+    require_admin($jwtSecret);
+    $orderId = $matches[1];
+    $newStatus = $body['status'] ?? null;
+    if (!$newStatus) {
+        json_error("Statut manquant.", 422);
+    }
+    try {
+        $stmt = $pdo->prepare("UPDATE orders SET status = :status, updated_at = NOW() WHERE id = :oid");
+        $stmt->execute([':status' => $newStatus, ':oid' => $orderId]);
+        json_response(['success' => true, 'status' => $newStatus]);
+    } catch (Exception $e) {
+        json_error("Erreur mise à jour statut: " . $e->getMessage(), 500);
     }
 }
 

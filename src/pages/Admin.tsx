@@ -542,7 +542,7 @@ export const Admin: React.FC = () => {
       const res = await AdminApi.validateOrderPricing(pricingOrder.id, itemsPayload);
       if (res.success) {
         const orderRef = pricingOrder.orderNumber || pricingOrder.id;
-        showToast(`Facture calculée et transmise avec succès au client pour la commande ${orderRef} ! Montant total : ${formatCurrency(computedPricingTotal)}`, 'success');
+        showToast(`Commande ${orderRef} chiffrée et confirmée ! Facture générée : ${formatCurrency(computedPricingTotal)}`, 'success');
         setIsPricingModalOpen(false);
         loadOrders();
       } else {
@@ -571,6 +571,20 @@ export const Admin: React.FC = () => {
       setUsersList((prev) =>
         prev.map((u) => (u.id === userId ? { ...u, status: newStatus } : u))
       );
+    }
+  };
+
+  const handleUpdateOrderStatus = async (orderId: string | number, newStatus: string) => {
+    try {
+      const res = await AdminApi.updateOrderStatus(orderId, newStatus);
+      if (res.success) {
+        showToast(`Statut commande mis à jour : ${getOrderStatus(newStatus).adminLabel}`, 'success');
+        loadOrders();
+      } else {
+        showToast(res.message || 'Impossible de mettre à jour le statut', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Erreur lors du changement de statut', 'error');
     }
   };
 
@@ -1862,15 +1876,30 @@ export const Admin: React.FC = () => {
                                   <span>{isPending ? 'Chiffrer' : 'Modifier prix'}</span>
                                 </button>
                                 {!isPending && (
-                                  <Link
-                                    to={`/facture?id=${o.id}`}
-                                    target="_blank"
-                                    className="min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700 border border-slate-200 hover:bg-slate-50 transition flex items-center gap-1 cursor-pointer"
-                                    title="Consulter la Facture A4"
-                                  >
-                                    <FileText className="w-3.5 h-3.5 text-[var(--primary)]" />
-                                    <span>Facture A4</span>
-                                  </Link>
+                                  <>
+                                    <select
+                                      aria-label="Changer le statut"
+                                      value={normalizeOrderStatus(o.status)}
+                                      onChange={(e) => handleUpdateOrderStatus(o.id, e.target.value)}
+                                      className="min-h-[38px] text-xs font-semibold px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white text-slate-700 outline-none focus:ring-1 focus:ring-[var(--primary)] cursor-pointer"
+                                      title="Avancer le statut de la commande"
+                                    >
+                                      <option value="quoted">Confirmée (Chiffrée)</option>
+                                      <option value="in_preparation">En préparation</option>
+                                      <option value="shipped">Expédiée</option>
+                                      <option value="delivered">Livrée</option>
+                                      <option value="cancelled">Annulée</option>
+                                    </select>
+                                    <Link
+                                      to={`/facture?id=${o.id}`}
+                                      target="_blank"
+                                      className="min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700 border border-slate-200 hover:bg-slate-50 transition flex items-center gap-1 cursor-pointer"
+                                      title="Consulter la Facture A4"
+                                    >
+                                      <FileText className="w-3.5 h-3.5 text-[var(--primary)]" />
+                                      <span>Facture A4</span>
+                                    </Link>
+                                  </>
                                 )}
                               </div>
                             </td>
@@ -1932,14 +1961,28 @@ export const Admin: React.FC = () => {
                             <span>{isPending ? 'Chiffrer la commande' : 'Ouvrir le chiffrage'}</span>
                           </button>
                           {!isPending && (
-                            <Link
-                              to={`/facture?id=${o.id}`}
-                              target="_blank"
-                              className="w-full min-h-[44px] rounded-xl text-xs font-semibold text-slate-700 border border-slate-200 bg-white hover:bg-slate-50 transition flex items-center justify-center gap-1.5 cursor-pointer"
-                            >
-                              <FileText className="w-4 h-4 text-[var(--primary)]" />
-                              <span>Consulter Facture A4</span>
-                            </Link>
+                            <div className="grid grid-cols-2 gap-2">
+                              <select
+                                aria-label="Changer le statut"
+                                value={normalizeOrderStatus(o.status)}
+                                onChange={(e) => handleUpdateOrderStatus(o.id, e.target.value)}
+                                className="w-full min-h-[44px] text-xs font-semibold px-2 py-1.5 rounded-xl border border-slate-200 bg-white text-slate-700 outline-none focus:ring-1 focus:ring-[var(--primary)] cursor-pointer"
+                              >
+                                <option value="quoted">Confirmée (Chiffrée)</option>
+                                <option value="in_preparation">En préparation</option>
+                                <option value="shipped">Expédiée</option>
+                                <option value="delivered">Livrée</option>
+                                <option value="cancelled">Annulée</option>
+                              </select>
+                              <Link
+                                to={`/facture?id=${o.id}`}
+                                target="_blank"
+                                className="w-full min-h-[44px] rounded-xl text-xs font-semibold text-slate-700 border border-slate-200 bg-white hover:bg-slate-50 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                              >
+                                <FileText className="w-4 h-4 text-[var(--primary)]" />
+                                <span>Facture A4</span>
+                              </Link>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -2979,7 +3022,7 @@ export const Admin: React.FC = () => {
 
                 <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-slate-500 mr-auto pl-4">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>La facture A4 sera immédiatement disponible pour le client</span>
+                  <span>Le chiffrage confirme la commande • Facture A4 émise immédiatement</span>
                 </div>
 
                 <button
@@ -2999,7 +3042,7 @@ export const Admin: React.FC = () => {
                   className="px-5 py-2.5 rounded-xl text-xs font-extrabold flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-md transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
                   <Send className="w-4 h-4" />
-                  <span>Calculer &amp; Envoyer la facture au client</span>
+                  <span>Valider le chiffrage &amp; Confirmer la commande</span>
                 </button>
               </div>
             </div>

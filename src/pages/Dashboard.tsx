@@ -131,7 +131,7 @@ export const Dashboard: React.FC = () => {
                 const oid = String(ord.orderNumber || ord.id);
                 const prevStatus = prevOrdersMap.get(oid);
                 if (prevStatus && isPendingQuote(prevStatus) && isQuoted(ord.status) && (ord.total || 0) > 0) {
-                  showToast(`Votre commande ${oid} a été chiffrée ! Montant : ${formatCurrency(ord.total)}`, 'success');
+                  showToast(`Votre commande ${oid} a été chiffrée et confirmée ! Montant : ${formatCurrency(ord.total)}`, 'success');
                 }
               }
             }

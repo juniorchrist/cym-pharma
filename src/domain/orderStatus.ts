@@ -17,10 +17,13 @@ export type OrderStatusCode =
   | 'delivered'       // Livrée
   | 'cancelled';      // Annulée
 
-/** Transitions autorisées entre statuts. */
+/** Transitions autorisées entre statuts.
+ * Règle d'or : le chiffrage par l'administrateur vaut confirmation de la commande.
+ * Une commande chiffrée passe donc directement à la préparation ou à l'expédition.
+ */
 export const ALLOWED_TRANSITIONS: Record<OrderStatusCode, OrderStatusCode[]> = {
   pending_quote:  ['quoted', 'cancelled'],
-  quoted:         ['confirmed', 'cancelled'],
+  quoted:         ['in_preparation', 'confirmed', 'shipped', 'cancelled'],
   confirmed:      ['in_preparation', 'cancelled'],
   in_preparation: ['shipped', 'cancelled'],
   shipped:        ['delivered', 'cancelled'],
@@ -50,8 +53,8 @@ export const ORDER_STATUSES: Record<OrderStatusCode, OrderStatusInfo> = {
   },
   quoted: {
     code: 'quoted',
-    adminLabel: 'Chiffrée',
-    clientLabel: 'Chiffrée — montant disponible',
+    adminLabel: 'Confirmée (Chiffrée)',
+    clientLabel: 'Confirmée — Chiffrée',
     pillClass: 'status-pill-green',
     hasAmount: true,
   },

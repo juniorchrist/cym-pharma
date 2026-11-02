@@ -1,4 +1,4 @@
-import { normalizeOrderStatus, getOrderStatus, isPendingQuote, isQuoted } from '../src/domain/orderStatus';
+import { normalizeOrderStatus, getOrderStatus, isPendingQuote, isQuoted, ALLOWED_TRANSITIONS } from '../src/domain/orderStatus';
 
 console.log('--- TEST 1: Normalisation des statuts de commande ---');
 const testCases = [
@@ -31,9 +31,19 @@ for (const tc of testCases) {
   }
 }
 
+console.log('\n--- TEST 2: Transitions de statut (Chiffrage = Confirmation) ---');
+const quotedTransitions = ALLOWED_TRANSITIONS.quoted;
+if (quotedTransitions.includes('in_preparation') && quotedTransitions.includes('shipped')) {
+  console.log(`✓ 'quoted' peut directement passer en 'in_preparation' ou 'shipped': [${quotedTransitions.join(', ')}]`);
+} else {
+  console.error(`FAIL: 'quoted' ne permet pas la transition directe vers 'in_preparation'.`);
+  allPassed = false;
+}
+
 if (allPassed) {
   console.log('\n✅ TOUS LES TESTS DE STATUT SONT VALIDES AVEC SUCCÈS.');
 } else {
   console.error('\n❌ DES ERREURS ONT ÉTÉ DÉTECTÉES.');
   process.exit(1);
 }
+
