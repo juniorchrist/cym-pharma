@@ -60,6 +60,7 @@ import {
   DEFAULT_REMINDER_TEMPLATES,
 } from '../utils/reminderTemplates';
 import { CATALOG_CATEGORIES } from '../data/catalog';
+import { normalizeOrderStatus, getOrderStatus, isPendingQuote, isQuoted } from '../domain/orderStatus';
 import { InventaireIndex } from './inventory';
 
 type AdminPanel = 'panel-overview' | 'panel-products' | 'panel-orders' | 'panel-clients' | 'panel-inventory' | 'panel-templates';
@@ -1058,7 +1059,7 @@ export const Admin: React.FC = () => {
             <Menu className="w-5 h-5" strokeWidth={1.75} />
           </button>
           <Link to="/accueil" className="flex items-center gap-2" aria-label="CYM Pharma — Accueil">
-            <img src="/LOGO.png" alt="CYM Pharma" className="h-10 w-auto object-contain" />
+            <img src="/LOGO.png" alt="CYM Pharma" className="h-9 sm:h-10 w-auto object-contain" style={{ filter: "none" }} />
           </Link>
           <div className="hidden sm:flex items-center gap-2 pl-3 border-l border-slate-200">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -1240,7 +1241,7 @@ export const Admin: React.FC = () => {
           {pendingReminder && (
             <aside
               aria-label="Confirmation de relance WhatsApp"
-              className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white shadow-xl border border-blue-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-3 duration-300"
+              className="mb-6 p-4 rounded-2xl bg-[var(--primary)] text-white shadow-xl border border-blue-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-3 duration-300"
             >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center shrink-0 text-emerald-400">
@@ -1295,7 +1296,7 @@ export const Admin: React.FC = () => {
                 {sectionTitle}
               </h1>
               <p className="text-xs text-slate-500 mt-0.5">
-                Catalogue hospitalier B2B, chiffrage des commandes et facturation réglementaire Abidjan.
+                Chiffrage des commandes et gestion du catalogue CYM Pharma.
               </p>
             </div>
 
@@ -1317,7 +1318,7 @@ export const Admin: React.FC = () => {
                     </span>
                   </div>
                   <p className="text-2xl font-bold text-amber-700">
-                    {ordersList.filter((o) => (o.status || '').toLowerCase().includes('chiffrer') || o.status === 'pending').length}
+                    {ordersList.filter((o) => isPendingQuote(o.status)).length}
                   </p>
                   <p className="text-[11px] text-amber-600 font-semibold mt-1">À traiter en priorité</p>
                 </div>
@@ -1333,7 +1334,7 @@ export const Admin: React.FC = () => {
                     </span>
                   </div>
                   <p className="text-2xl font-bold text-[#155E95]">
-                    {ordersList.filter((o) => (o.status || '').toLowerCase().includes('chiffrée') || o.status === 'confirmed').length}
+                    {ordersList.filter((o) => isQuoted(o.status)).length}
                   </p>
                   <p className="text-[11px] text-blue-600 font-semibold mt-1">Tarifs validés</p>
                 </div>
@@ -1376,7 +1377,7 @@ export const Admin: React.FC = () => {
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h3 className="text-sm font-bold uppercase tracking-wider text-slate-700">
-                      Réquisitions récentes reçues
+                      Commandes récentes reçues
                     </h3>
                     <p className="text-xs text-slate-400">Ouvrez le détail pour effectuer le chiffrage</p>
                   </div>
@@ -1389,12 +1390,13 @@ export const Admin: React.FC = () => {
                   </button>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
+                {/* Vue Bureau (>= 768px) : Tableau avec défilement sécurisé */}
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-left text-xs min-w-[620px]">
                     <thead>
-                      <tr className="border-b border-slate-200 text-slate-400 uppercase tracking-wider">
+                      <tr className="border-b border-slate-200 text-slate-400 uppercase tracking-wider text-[10px]">
                         <th className="pb-3 font-semibold">N° Commande</th>
-                        <th className="pb-3 font-semibold">Structure Clinique</th>
+                        <th className="pb-3 font-semibold">Établissement</th>
                         <th className="pb-3 font-semibold">Date</th>
                         <th className="pb-3 font-semibold text-center">Articles</th>
                         <th className="pb-3 font-semibold">Montant chiffré</th>
@@ -1404,13 +1406,14 @@ export const Admin: React.FC = () => {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {ordersList.slice(0, 5).map((ord) => {
-                        const isAChiffrer = (ord.status || '').toLowerCase().includes('chiffrer') || ord.status === 'pending';
+                        const stInfo = getOrderStatus(ord.status);
+                        const isPending = isPendingQuote(ord.status);
                         return (
                           <tr key={ord.id} className="hover:bg-slate-50 transition">
                             <td className="py-3.5 font-bold font-mono text-[#155E95]">
                               {ord.order_number || ord.orderNumber || ord.id}
                             </td>
-                            <td className="py-3.5 font-semibold text-slate-800">
+                            <td className="py-3.5 font-semibold text-slate-800 max-w-[160px] truncate">
                               {ord.establishment_name}
                             </td>
                             <td className="py-3.5 text-slate-500">
@@ -1420,27 +1423,33 @@ export const Admin: React.FC = () => {
                               {ord.item_count || ord.items?.length || 1}
                             </td>
                             <td className="py-3.5 font-bold">
-                              {ord.total ? formatCurrency(ord.total) : <span className="text-slate-400 font-normal italic">En attente</span>}
+                              {isPending || !ord.total ? (
+                                <span className="text-amber-700 font-semibold italic bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                  À chiffrer
+                                </span>
+                              ) : (
+                                <span className="font-mono text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                  {formatCurrency(ord.total)}
+                                </span>
+                              )}
                             </td>
                             <td className="py-3.5">
-                              {isAChiffrer ? (
-                                <span className="status-pill status-pill-amber">À chiffrer</span>
-                              ) : (
-                                <span className="status-pill status-pill-green">Chiffrée</span>
-                              )}
+                              <span className={`status-pill ${stInfo.pillClass}`}>
+                                {stInfo.adminLabel}
+                              </span>
                             </td>
                             <td className="py-3.5 text-right">
                               <button
                                 type="button"
                                 onClick={() => handleOpenPricingModal(ord)}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ml-auto cursor-pointer ${
-                                  isAChiffrer
-                                    ? 'bg-[var(--primary)] text-white hover:brightness-110 shadow-xs'
-                                    : 'border border-slate-200 text-slate-700 hover:bg-slate-100'
+                                className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-bold transition inline-flex items-center gap-1.5 ml-auto cursor-pointer shadow-xs ${
+                                  isPending
+                                    ? 'bg-[var(--primary)] text-white hover:brightness-110'
+                                    : 'border border-slate-200 text-slate-700 bg-white hover:bg-slate-50'
                                 }`}
                               >
                                 <Calculator className="w-3.5 h-3.5" />
-                                <span>{isAChiffrer ? 'Chiffrer' : 'Voir Chiffrage'}</span>
+                                <span>{isPending ? 'Chiffrer' : 'Voir Chiffrage'}</span>
                               </button>
                             </td>
                           </tr>
@@ -1448,6 +1457,60 @@ export const Admin: React.FC = () => {
                       })}
                     </tbody>
                   </table>
+                </div>
+
+                {/* Vue Mobile (< 768px) : Liste de Cartes Complètes Sans Débordement */}
+                <div className="md:hidden space-y-3">
+                  {ordersList.slice(0, 5).map((ord) => {
+                    const stInfo = getOrderStatus(ord.status);
+                    const isPending = isPendingQuote(ord.status);
+                    return (
+                      <div key={ord.id} className="p-4 rounded-2xl border border-slate-200 bg-white space-y-3 shadow-xs">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="font-mono font-bold text-[#155E95] text-xs">
+                              {ord.order_number || ord.orderNumber || ord.id}
+                            </p>
+                            <p className="font-bold text-slate-900 text-sm mt-0.5">
+                              {ord.establishment_name}
+                            </p>
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              {ord.created_at ? ord.created_at.slice(0, 10) : ''} • {ord.item_count || ord.items?.length || 1} article(s)
+                            </p>
+                          </div>
+                          <span className={`status-pill ${stInfo.pillClass} shrink-0`}>
+                            {stInfo.adminLabel}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs">
+                          <span className="text-slate-500 font-medium">Montant :</span>
+                          {isPending || !ord.total ? (
+                            <span className="text-amber-700 font-bold bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                              À chiffrer
+                            </span>
+                          ) : (
+                            <span className="font-mono font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                              {formatCurrency(ord.total)}
+                            </span>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleOpenPricingModal(ord)}
+                          className={`w-full min-h-[44px] rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs ${
+                            isPending
+                              ? 'bg-[var(--primary)] text-white hover:brightness-110'
+                              : 'border border-slate-200 text-slate-700 bg-slate-50 hover:bg-slate-100'
+                          }`}
+                        >
+                          <Calculator className="w-4 h-4" />
+                          <span>{isPending ? 'Chiffrer la commande' : 'Ouvrir le chiffrage'}</span>
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -1663,7 +1726,7 @@ export const Admin: React.FC = () => {
                 <div className="admin-card p-4">
                   <p className="text-[10px] uppercase font-bold text-emerald-600 mb-1">Factures émises</p>
                   <p className="text-2xl font-bold text-emerald-700">
-                    {ordersList.filter((o) => (o.status || '').toLowerCase().includes('chiffrée') || (o.status || '').toLowerCase().includes('facture') || o.status === 'confirmed').length}
+                    {ordersList.filter((o) => isQuoted(o.status)).length}
                   </p>
                 </div>
                 <div className="admin-card p-4">
@@ -1734,13 +1797,14 @@ export const Admin: React.FC = () => {
                 </div>
 
                 {/* Table commandes */}
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
+                {/* Vue Bureau (>= 768px) : Tableau avec défilement sécurisé */}
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-left text-xs min-w-[700px]">
                     <thead>
-                      <tr className="border-b border-slate-200 text-slate-400 uppercase tracking-wider">
+                      <tr className="border-b border-slate-200 text-slate-400 uppercase tracking-wider text-[10px]">
                         <th className="pb-3 font-semibold">N° Commande</th>
                         <th className="pb-3 font-semibold">Date</th>
-                        <th className="pb-3 font-semibold">Établissement demandeur</th>
+                        <th className="pb-3 font-semibold">Structure demandeur</th>
                         <th className="pb-3 font-semibold">Commune</th>
                         <th className="pb-3 font-semibold text-center">Articles</th>
                         <th className="pb-3 font-semibold">Montant Chiffré</th>
@@ -1750,16 +1814,17 @@ export const Admin: React.FC = () => {
                     </thead>
                     <tbody id="orders-table-body" className="divide-y divide-slate-100">
                       {filteredOrders.map((o) => {
-                        const isAChiffrer = (o.status || '').toLowerCase().includes('chiffrer') || o.status === 'pending';
+                        const stInfo = getOrderStatus(o.status);
+                        const isPending = isPendingQuote(o.status);
                         return (
                           <tr key={o.id} className="hover:bg-slate-50 transition">
-                            <td className="py-3.5 font-mono font-bold text-slate-900">
+                            <td className="py-3.5 font-mono font-bold text-[#155E95]">
                               {o.order_number || o.orderNumber || o.id}
                             </td>
                             <td className="py-3.5 text-slate-500">
                               {o.created_at ? o.created_at.substring(0, 10) : ''}
                             </td>
-                            <td className="py-3.5 font-bold text-slate-800">
+                            <td className="py-3.5 font-bold text-slate-800 max-w-[160px] truncate">
                               {o.establishment_name}
                             </td>
                             <td className="py-3.5 text-slate-600">{o.shipping_city || 'Abidjan'}</td>
@@ -1767,45 +1832,43 @@ export const Admin: React.FC = () => {
                               {o.item_count || o.items?.length || 1}
                             </td>
                             <td className="py-3.5 font-bold">
-                              {o.total ? (
-                                <span className="font-mono text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                                  {formatCurrency(o.total)}
-                                </span>
-                              ) : (
+                              {isPending || !o.total ? (
                                 <span className="text-amber-700 font-semibold italic bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                                   À chiffrer
+                                </span>
+                              ) : (
+                                <span className="font-mono text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                  {formatCurrency(o.total)}
                                 </span>
                               )}
                             </td>
                             <td className="py-3.5">
-                              {isAChiffrer ? (
-                                <span className="status-pill status-pill-amber">À chiffrer</span>
-                              ) : (
-                                <span className="status-pill status-pill-green">Chiffrée</span>
-                              )}
+                              <span className={`status-pill ${stInfo.pillClass}`}>
+                                {stInfo.adminLabel}
+                              </span>
                             </td>
                             <td className="py-3.5 text-right whitespace-nowrap">
                               <div className="inline-flex items-center gap-1.5 justify-end">
                                 <button
                                   type="button"
                                   onClick={() => handleOpenPricingModal(o)}
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-xs cursor-pointer ${
-                                    isAChiffrer
+                                  className={`min-h-[38px] px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer ${
+                                    isPending
                                       ? 'bg-amber-600 text-white hover:bg-amber-700'
-                                      : 'border border-slate-200 text-slate-700 bg-white hover:bg-slate-100'
+                                      : 'border border-slate-200 text-slate-700 bg-white hover:bg-slate-50'
                                   }`}
                                 >
                                   <Calculator className="w-3.5 h-3.5" />
-                                  <span>{isAChiffrer ? 'Calculer le prix' : 'Modifier prix'}</span>
+                                  <span>{isPending ? 'Chiffrer' : 'Modifier prix'}</span>
                                 </button>
-                                {!isAChiffrer && (
+                                {!isPending && (
                                   <Link
                                     to={`/facture?id=${o.id}`}
                                     target="_blank"
-                                    className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 border border-slate-200 hover:bg-slate-100 transition flex items-center gap-1 cursor-pointer"
+                                    className="min-h-[38px] px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-700 border border-slate-200 hover:bg-slate-50 transition flex items-center gap-1 cursor-pointer"
                                     title="Consulter la Facture A4"
                                   >
-                                    <FileText className="w-3 h-3 text-[var(--primary)]" />
+                                    <FileText className="w-3.5 h-3.5 text-[var(--primary)]" />
                                     <span>Facture A4</span>
                                   </Link>
                                 )}
@@ -1816,6 +1879,72 @@ export const Admin: React.FC = () => {
                       })}
                     </tbody>
                   </table>
+                </div>
+
+                {/* Vue Mobile (< 768px) : Liste de Cartes Complètes Sans Débordement */}
+                <div className="md:hidden space-y-3">
+                  {filteredOrders.map((o) => {
+                    const stInfo = getOrderStatus(o.status);
+                    const isPending = isPendingQuote(o.status);
+                    return (
+                      <div key={o.id} className="p-4 rounded-2xl border border-slate-200 bg-white space-y-3 shadow-xs">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="font-mono font-bold text-[#155E95] text-xs">
+                              {o.order_number || o.orderNumber || o.id}
+                            </p>
+                            <p className="font-bold text-slate-900 text-sm mt-0.5">
+                              {o.establishment_name}
+                            </p>
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              {o.created_at ? o.created_at.slice(0, 10) : ''} • {o.shipping_city || 'Abidjan'} • {o.item_count || o.items?.length || 1} article(s)
+                            </p>
+                          </div>
+                          <span className={`status-pill ${stInfo.pillClass} shrink-0`}>
+                            {stInfo.adminLabel}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs">
+                          <span className="text-slate-500 font-medium">Montant :</span>
+                          {isPending || !o.total ? (
+                            <span className="text-amber-700 font-bold bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                              À chiffrer
+                            </span>
+                          ) : (
+                            <span className="font-mono font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                              {formatCurrency(o.total)}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPricingModal(o)}
+                            className={`w-full min-h-[44px] rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-xs ${
+                              isPending
+                                ? 'bg-[var(--primary)] text-white hover:brightness-110'
+                                : 'border border-slate-200 text-slate-700 bg-slate-50 hover:bg-slate-100'
+                            }`}
+                          >
+                            <Calculator className="w-4 h-4" />
+                            <span>{isPending ? 'Chiffrer la commande' : 'Ouvrir le chiffrage'}</span>
+                          </button>
+                          {!isPending && (
+                            <Link
+                              to={`/facture?id=${o.id}`}
+                              target="_blank"
+                              className="w-full min-h-[44px] rounded-xl text-xs font-semibold text-slate-700 border border-slate-200 bg-white hover:bg-slate-50 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                            >
+                              <FileText className="w-4 h-4 text-[var(--primary)]" />
+                              <span>Consulter Facture A4</span>
+                            </Link>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -1834,7 +1963,7 @@ export const Admin: React.FC = () => {
           {activePanel === 'panel-clients' && (
             <div id="panel-clients" className="panel active space-y-6">
               {/* Honest Module Banner */}
-              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="p-4 sm:p-5 rounded-2xl bg-[var(--primary)] text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
@@ -1894,14 +2023,24 @@ export const Admin: React.FC = () => {
                   </p>
                   <p className="text-[11px] text-amber-700 font-medium mt-0.5">E-mail non vérifié</p>
                 </div>
-                <div className="admin-card p-4">
-                  <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">En ligne actuellement</p>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-slate-300"></span>
-                    <p className="text-2xl font-bold text-slate-700">0</p>
-                  </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5">Présence Realtime active</p>
-                </div>
+                {(() => {
+                  const onlineCount = usersList.filter((u) => {
+                    const ls = (u as any).last_seen_at || (u as any).last_login_at;
+                    return Boolean(ls && Date.now() - new Date(ls).getTime() < 90 * 1000);
+                  }).length;
+                  return (
+                    <div className="admin-card p-4">
+                      <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">En ligne actuellement</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className={`w-2.5 h-2.5 rounded-full ${onlineCount > 0 ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
+                        <p className="text-2xl font-bold text-slate-700">{onlineCount}</p>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        {onlineCount > 0 ? 'Actifs (≤ 90 s)' : 'Aucun client actif'}
+                      </p>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Client List Card */}
@@ -1916,7 +2055,7 @@ export const Admin: React.FC = () => {
 
                   {/* Filter Tabs & Search */}
                   <div className="flex flex-wrap items-center gap-2">
-                    <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200">
+                    <div className="flex overflow-x-auto gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200 no-scrollbar" style={{ scrollbarWidth: "none" }}>
                       <button
                         type="button"
                         onClick={() => {

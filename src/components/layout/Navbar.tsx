@@ -254,7 +254,8 @@ export const Navbar: React.FC = () => {
                 <img
                   src="/LOGO.png"
                   alt="CYM Pharma"
-                  className="h-14 w-auto object-contain"
+                  className="h-10 sm:h-11 w-auto object-contain"
+                  style={{ filter: 'none' }}
                   onError={() => setLogoError(true)}
                 />
               ) : (

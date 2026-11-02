@@ -214,7 +214,7 @@ export const Categorie: React.FC = () => {
           </div>
 
           {/* GRILLE DES PRODUITS */}
-          <div className="reveal" id="products-grid">
+          <div className="reveal in" id="products-grid">
             {loading ? (
               <LoadingState message="Chargement des références médicales…" />
             ) : filteredProducts.length === 0 ? (

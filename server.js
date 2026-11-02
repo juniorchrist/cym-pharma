@@ -240,6 +240,17 @@ router.post('/contact', async (req, res) => {
 });
 
 // 5. Authentification client / admin
+router.post('/presence/ping', async (req, res) => {
+  try {
+    const user = await verifyToken(req);
+    const uid = user?.sub || user?.id;
+    if (uid) {
+      await db.from('profiles').update({ last_seen_at: new Date().toISOString() }).eq('id', uid);
+    }
+  } catch (err) {}
+  send(res, 200, { success: true, timestamp: new Date().toISOString() });
+});
+
 router.post('/auth/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
@@ -661,6 +672,34 @@ router.post('/admin/orders/:id/save-pricing', async (req, res) => {
   send(res, 200, { success: true, data: { order } });
 });
 
+router.post('/admin/orders/:id/quote', async (req, res) => {
+  const adminId = await requireAdmin(req, res);
+  if (!adminId) return;
+  const { items } = req.body;
+  let total = 0;
+  if (Array.isArray(items)) {
+    for (const it of items) {
+      const pid = it.productId || it.product_id;
+      if (pid) {
+        const uPrice = Number(it.unit_price) || 0;
+        await db.from('order_items').update({ unit_price: uPrice, line_total: uPrice * (Number(it.quantity) || 1) }).eq('order_id', req.params.id).or(`product_id.eq.${pid},id.eq.${it.id || pid}`);
+        total += uPrice * (Number(it.quantity) || 1);
+      }
+    }
+  }
+  const now = new Date().toISOString();
+  const invoiceNum = `FAC-${String(req.params.id).replace('CMD-', '')}`;
+  await db.from('orders').update({ status: 'quoted', total: total, subtotal: total, invoice_number: invoiceNum, invoice_date: now, priced_at: now, quoted_at: now, updated_at: now }).eq('id', req.params.id);
+  await db.from('order_status_history').insert({
+    order_id: req.params.id,
+    status: 'quoted',
+    note: `Chiffrage validé : ${total} FCFA`,
+    changed_by: adminId,
+  });
+  const { data: order } = await db.from('orders').select('*, items:order_items(*)').eq('id', req.params.id).maybeSingle();
+  send(res, 200, { success: true, data: { order } });
+});
+
 router.post('/admin/orders/:id/validate-pricing', async (req, res) => {
   const adminId = await requireAdmin(req, res);
   if (!adminId) return;
@@ -677,10 +716,10 @@ router.post('/admin/orders/:id/validate-pricing', async (req, res) => {
   }
   const now = new Date().toISOString();
   const invoiceNum = `FAC-${String(req.params.id).replace('CMD-', '')}`;
-  await db.from('orders').update({ status: 'Devis envoyé', total: total, subtotal: total, invoice_number: invoiceNum, invoice_date: now, priced_at: now, updated_at: now }).eq('id', req.params.id);
+  await db.from('orders').update({ status: 'quoted', total: total, subtotal: total, invoice_number: invoiceNum, invoice_date: now, priced_at: now, quoted_at: now, updated_at: now }).eq('id', req.params.id);
   await db.from('order_status_history').insert({
     order_id: req.params.id,
-    status: 'Devis envoyé',
+    status: 'quoted',
     note: `Chiffrage validé : ${total} FCFA`,
     changed_by: adminId,
   });
@@ -828,6 +867,7 @@ router.get('/admin/users', async (req, res) => {
         is_email_confirmed: isEmailConfirmed,
         last_sign_in_at: lastSignInAt,
         last_login_at: lastSignInAt,
+        last_seen_at: prof?.last_seen_at || null,
       });
     }
 
@@ -847,7 +887,7 @@ router.get('/admin/users', async (req, res) => {
           totalRegistered,
           totalConfirmed,
           totalPending,
-          totalOnline: null, // Pas de mécanisme de présence par défaut — ne pas inventer
+          totalOnline: users.filter((u) => u.last_seen_at && (Date.now() - new Date(u.last_seen_at).getTime() < 90 * 1000)).length,
         },
       },
     });

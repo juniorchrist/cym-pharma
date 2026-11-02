@@ -208,6 +208,14 @@ export const Auth = {
           status: profile?.status || 'active',
         };
 
+        try {
+          const nowIso = new Date().toISOString();
+          await supabase.from('profiles').update({
+            last_login_at: nowIso,
+            last_seen_at: nowIso,
+          }).eq('id', authData.user.id);
+        } catch {}
+
         storage.setAuthToken(token);
         storage.setUser(user);
         if (user.role === 'admin') {
@@ -762,6 +770,22 @@ export const Users = {
   async dashboard(): Promise<ApiResponse<{ user: User; stats: Record<string, number>; recentOrders: Order[] }>> {
     return request<{ user: User; stats: Record<string, number>; recentOrders: Order[] }>('/users/dashboard');
   },
+
+  async ping(): Promise<void> {
+    const currentUser = storage.getUser();
+    if (!currentUser?.id) return;
+    const nowIso = new Date().toISOString();
+
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        await supabase.from('profiles').update({ last_seen_at: nowIso }).eq('id', currentUser.id);
+      } catch {}
+    }
+
+    try {
+      await request('/presence/ping', { method: 'POST' });
+    } catch {}
+  },
 };
 
 // ── Espace Administration ──
@@ -855,17 +879,44 @@ export const Admin = {
     // 2. Fallback Supabase direct (profiles) en cas d'indisponibilité temporaire du serveur Node.js
     if (isSupabaseConfigured() && supabase) {
       try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*, client_reminders(id, status, opened_at, template_key)')
-          .neq('role', 'admin')
-          .order('created_at', { ascending: false });
+        // 1. Essai RPC admin_get_clients (données auth + profiles réelles)
+        let data: any[] | null = null;
+        try {
+          const { data: rpcData, error: rpcErr } = await supabase.rpc('admin_get_clients');
+          if (!rpcErr && rpcData && rpcData.length > 0) {
+            data = rpcData;
+          }
+        } catch {}
 
-        if (!error && data) {
+        // 2. Fallback lecture directe profiles (SANS jointure ambiguë client_reminders qui causait PGRST201)
+        if (!data) {
+          const { data: directData, error: directErr } = await supabase
+            .from('profiles')
+            .select('*')
+            .neq('role', 'admin')
+            .order('created_at', { ascending: false });
+
+          if (!directErr && directData) {
+            data = directData;
+          }
+        }
+
+        // 3. Charger les rappels séparément sans provoquer de PGRST201
+        let remindersList: any[] = [];
+        try {
+          const { data: rems } = await supabase
+            .from('client_reminders')
+            .select('id, user_id, status, opened_at, template_key');
+          if (rems) remindersList = rems;
+        } catch {}
+
+        if (data) {
           const INACTIVITY_DAYS = 60;
+          const ONLINE_THRESHOLD_MS = 90 * 1000; // 90 secondes
+
           const mapped: User[] = data.map((p: any) => {
-            const reminders = Array.isArray(p.client_reminders) ? p.client_reminders : [];
-            const latestRem = [...reminders].sort(
+            const userReminders = remindersList.filter((r) => String(r.user_id) === String(p.id));
+            const latestRem = [...userReminders].sort(
               (a: any, b: any) => new Date(b.opened_at).getTime() - new Date(a.opened_at).getTime()
             )[0];
 
@@ -876,6 +927,17 @@ export const Admin = {
               daysSince = Math.floor((Date.now() - new Date(p.created_at).getTime()) / (1000 * 60 * 60 * 24));
             }
             const isInactive = p.status === 'inactive' || (typeof daysSince === 'number' && daysSince >= INACTIVITY_DAYS);
+
+            const isOnline = Boolean(
+              p.last_seen_at && Date.now() - new Date(p.last_seen_at).getTime() < ONLINE_THRESHOLD_MS
+            );
+
+            const isConfirmed = Boolean(
+              p.is_email_confirmed === true ||
+              p.email_confirmed_at ||
+              p.status === 'active' ||
+              p.last_order_at
+            );
 
             return {
               id: p.id,
@@ -899,9 +961,16 @@ export const Admin = {
               latest_reminder_id: latestRem?.id,
               days_since_last_order: daysSince,
               is_server_inactive: isInactive,
-              is_email_confirmed: p.status === 'active' || Boolean(p.last_order_at),
+              is_email_confirmed: isConfirmed,
+              email_confirmed_at: p.email_confirmed_at,
+              last_sign_in_at: p.last_sign_in_at || p.last_login_at,
+              last_login_at: p.last_login_at || p.last_sign_in_at,
+              last_seen_at: p.last_seen_at,
+              is_online: isOnline,
             } as User;
           });
+
+          const totalOnlineCount = mapped.filter((u) => (u as any).is_online).length;
 
           return {
             success: true,
@@ -911,7 +980,7 @@ export const Admin = {
                 totalRegistered: mapped.length,
                 totalConfirmed: mapped.filter((u) => u.is_email_confirmed).length,
                 totalPending: mapped.filter((u) => !u.is_email_confirmed).length,
-                totalOnline: null,
+                totalOnline: totalOnlineCount,
               },
             },
           };
@@ -1398,7 +1467,7 @@ export const Admin = {
         await supabase
           .from('orders')
           .update({
-            status: 'Devis envoyé',
+            status: 'quoted',
             subtotal: computedTotal,
             total: computedTotal,
             priced_at: now,
@@ -1412,7 +1481,7 @@ export const Admin = {
         const userRes = await supabase.auth.getUser();
         await supabase.from('order_status_history').insert({
           order_id: String(orderId),
-          status: 'Devis envoyé',
+          status: 'quoted',
           note: `Chiffrage validé : ${computedTotal} FCFA`,
           changed_by: userRes.data.user?.id || null,
         });

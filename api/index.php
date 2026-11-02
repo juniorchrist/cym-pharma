@@ -282,6 +282,65 @@ if ($path === '/orders' && $method === 'POST') {
     }
 }
 
+// 7. Battement de cœur présence : POST /presence/ping
+if ($path === '/presence/ping' && $method === 'POST') {
+    try {
+        $auth = verify_jwt($jwtSecret);
+        $userId = $auth['sub'] ?? null;
+        if ($userId) {
+            $stmt = $pdo->prepare("UPDATE users SET last_seen_at = NOW() WHERE id = :id");
+            $stmt->execute([':id' => $userId]);
+        }
+    } catch (Exception $e) {}
+    json_response(['success' => true, 'timestamp' => date('c')]);
+}
+
+// 8. Chiffrage atomique d'une commande : POST /admin/orders/{id}/quote
+if (preg_match('#^/admin/orders/([^/]+)/quote$#', $path, $matches) && $method === 'POST') {
+    require_admin($jwtSecret);
+    $orderId = $matches[1];
+    $items = $body['items'] ?? [];
+    if (empty($items)) {
+        json_error("Au moins un article doit être chiffré.", 422);
+    }
+    try {
+        $pdo->beginTransaction();
+        $total = 0;
+        $updItem = $pdo->prepare("UPDATE order_items SET unit_price = :price, line_total = :total WHERE order_id = :oid AND (product_id = :pid OR id = :iid)");
+        foreach ($items as $it) {
+            $pid = $it['productId'] ?? $it['product_id'] ?? null;
+            $iid = $it['id'] ?? null;
+            $price = (float)($it['unit_price'] ?? 0);
+            $qty = (int)($it['quantity'] ?? 1);
+            $lineTotal = $price * $qty;
+            $total += $lineTotal;
+            $updItem->execute([
+                ':price' => $price,
+                ':total' => $lineTotal,
+                ':oid'   => $orderId,
+                ':pid'   => $pid,
+                ':iid'   => $iid,
+            ]);
+        }
+        $updOrder = $pdo->prepare("UPDATE orders SET status = 'quoted', total = :total, subtotal = :subtotal, quoted_at = NOW(), updated_at = NOW() WHERE id = :oid");
+        $updOrder->execute([
+            ':total'    => $total,
+            ':subtotal' => $total,
+            ':oid'      => $orderId,
+        ]);
+        $pdo->commit();
+        json_response([
+            'success' => true,
+            'message' => 'Chiffrage validé et enregistré avec succès.',
+            'total'   => $total,
+            'status'  => 'quoted',
+        ]);
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        json_error("Erreur lors de l'enregistrement du chiffrage.", 500);
+    }
+}
+
 // ── TOUTES LES ROUTES CI-DESSOUS REQUIÈRENT UN RÔLE ADMIN ───────────────────
 // 1. Modèles de relance : GET /admin/reminders/templates
 if ($path === '/admin/reminders/templates' && $method === 'GET') {

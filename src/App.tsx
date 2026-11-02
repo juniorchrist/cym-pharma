@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { Users } from './services/api';
 import { CartProvider } from './context/CartContext';
 import { ToastProvider } from './context/ToastContext';
 
@@ -22,6 +23,43 @@ import { Contact } from './pages/Contact';
 import { ProtectedRoute } from './routes/ProtectedRoute';
 import { AdminRoute } from './routes/AdminRoute';
 import { PublicOnlyRoute } from './routes/PublicOnlyRoute';
+
+
+function GlobalPresenceHeartbeat() {
+  const { isAuthenticated } = useAuth();
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    // Heartbeat initial
+    Users.ping();
+
+    // Rechargement au retour sur l'onglet
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        Users.ping();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleVisibility);
+
+    // Heartbeat toutes les 45 secondes tant que l'onglet est actif
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        Users.ping();
+      }
+    }, 45000);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleVisibility);
+      clearInterval(timer);
+    };
+  }, [isAuthenticated]);
+
+  return null;
+}
 
 export default function App() {
   return (

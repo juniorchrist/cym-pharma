@@ -26,6 +26,7 @@ import { useToast } from '../context/ToastContext';
 import { Users, Orders } from '../services/api';
 import { storage } from '../utils/storage';
 import { formatCurrency } from '../utils/currency';
+import { normalizeOrderStatus, getOrderStatus, isPendingQuote, isQuoted } from '../domain/orderStatus';
 import { ALL_PRODUCTS } from '../data/catalog';
 import { Order } from '../types';
 
@@ -114,30 +115,72 @@ export const Dashboard: React.FC = () => {
 
   useEffect(() => {
     let isMounted = true;
-    const fetchOrders = async () => {
-      setOrdersLoading(true);
+    let prevOrdersMap = new Map<string, string>();
+
+    const fetchOrders = async (silent = false) => {
+      if (!silent) setOrdersLoading(true);
       try {
         const res = await Orders.list();
         if (isMounted) {
           if (res.success && Array.isArray(res.data?.orders)) {
-            setOrders(res.data.orders);
+            const fetched = res.data.orders;
+
+            // Notification détection si une commande vient d'être chiffrée
+            if (prevOrdersMap.size > 0) {
+              for (const ord of fetched) {
+                const oid = String(ord.orderNumber || ord.id);
+                const prevStatus = prevOrdersMap.get(oid);
+                if (prevStatus && isPendingQuote(prevStatus) && isQuoted(ord.status) && (ord.total || 0) > 0) {
+                  showToast(`Votre commande ${oid} a été chiffrée ! Montant : ${formatCurrency(ord.total)}`, 'success');
+                }
+              }
+            }
+
+            prevOrdersMap = new Map(fetched.map((o) => [String(o.orderNumber || o.id), o.status || '']));
+            setOrders(fetched);
           } else {
             setOrders([]);
           }
         }
       } catch (err) {
         console.warn('Orders.list error:', err);
-        if (isMounted) setOrders([]);
+        if (isMounted && !silent) setOrders([]);
       } finally {
-        if (isMounted) setOrdersLoading(false);
+        if (isMounted && !silent) setOrdersLoading(false);
       }
     };
 
-    fetchOrders();
+    // Chargement initial
+    fetchOrders(false);
+
+    // Heartbeat présence initial
+    Users.ping();
+
+    // Rechargement au retour sur l'onglet
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchOrders(true);
+        Users.ping();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleVisibility);
+
+    // Polling toutes les 45 secondes (uniquement si l'onglet est visible)
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchOrders(true);
+        Users.ping();
+      }
+    }, 45000);
+
     return () => {
       isMounted = false;
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleVisibility);
+      clearInterval(interval);
     };
-  }, []);
+  }, [showToast]);
 
   const switchPanel = (panel: PanelKey) => {
     setActivePanel(panel);
@@ -816,15 +859,14 @@ export const Dashboard: React.FC = () => {
                               {ord.total ? formatCurrency(ord.total) : <span className="text-slate-400 font-normal italic">En chiffrage</span>}
                             </td>
                             <td className="py-3.5">
-                              {ord.status === 'Facture disponible' || (Number(ord.total) || 0) > 0 ? (
-                                <span className="status-pill status-pill-green">Facture disponible</span>
-                              ) : ord.status === 'delivered' ? (
-                                <span className="status-pill status-pill-green">Livrée</span>
-                              ) : ord.status === 'shipped' ? (
-                                <span className="status-pill status-pill-blue">En livraison</span>
-                              ) : (
-                                <span className="status-pill status-pill-amber">À chiffrer</span>
-                              )}
+                              {(() => {
+                                const st = getOrderStatus(ord.status);
+                                return (
+                                  <span className={`status-pill ${st.pillClass}`}>
+                                    {st.clientLabel}
+                                  </span>
+                                );
+                              })()}
                             </td>
                             <td className="py-3.5 text-right space-x-2">
                               <Link
@@ -910,15 +952,14 @@ export const Dashboard: React.FC = () => {
                               {ord.total ? formatCurrency(ord.total) : <span className="text-slate-400 font-normal italic">En chiffrage</span>}
                             </td>
                             <td className="py-4">
-                              {ord.status === 'Facture disponible' || (Number(ord.total) || 0) > 0 ? (
-                                <span className="status-pill status-pill-green">Facture prête</span>
-                              ) : ord.status === 'delivered' ? (
-                                <span className="status-pill status-pill-green">Livrée</span>
-                              ) : ord.status === 'shipped' ? (
-                                <span className="status-pill status-pill-blue">En livraison</span>
-                              ) : (
-                                <span className="status-pill status-pill-amber">À chiffrer</span>
-                              )}
+                              {(() => {
+                                const st = getOrderStatus(ord.status);
+                                return (
+                                  <span className={`status-pill ${st.pillClass}`}>
+                                    {st.clientLabel}
+                                  </span>
+                                );
+                              })()}
                             </td>
                             <td className="py-4 text-right">
                               {ord.status === 'Facture disponible' || (Number(ord.total) || 0) > 0 || ord.invoice_number ? (

@@ -45,6 +45,7 @@ import {
   Ruler,
 } from 'lucide-react';
 import { PageShell } from '../components/layout/PageShell';
+import { ErrorBoundary } from '../components/ui/ErrorBoundary';
 import { useReveal } from '../hooks/useReveal';
 import { CATALOG_CATEGORIES, ALL_PRODUCTS } from '../data/catalog';
 
@@ -170,8 +171,9 @@ export const Catalogue: React.FC = () => {
           </div>
 
           {/* GRILLE DES CATÉGORIES */}
-          <div className="reveal grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" id="categories-grid">
-            {filteredCategories.map((cat) => {
+          <ErrorBoundary fallbackTitle="Erreur d'affichage du catalogue" fallbackMessage="Une erreur est survenue lors de l'affichage des catégories. Veuillez réessayer.">
+            <div className="reveal in grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" id="categories-grid">
+              {filteredCategories.map((cat) => {
               const count = categoryCounts[cat.slug] || 0;
               return (
                 <Link
@@ -213,6 +215,7 @@ export const Catalogue: React.FC = () => {
               );
             })}
           </div>
+        </ErrorBoundary>
 
           {filteredCategories.length === 0 && (
             <div className="text-center py-16 bg-white rounded-2xl border border-slate-200">
