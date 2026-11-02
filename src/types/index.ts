@@ -141,6 +141,7 @@ export interface CartItem {
 
 export interface OrderItem {
   productId?: number | string;
+  product_id?: number | string;
   id?: number | string;
   product_name?: string;
   name?: string;

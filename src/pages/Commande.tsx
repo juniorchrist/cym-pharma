@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ShieldCheck,
@@ -13,6 +13,7 @@ import {
   Building2,
   MapPin,
   Info,
+  AlertTriangle,
 } from 'lucide-react';
 import { PageShell } from '../components/layout/PageShell';
 import { useAuth } from '../context/AuthContext';
@@ -21,6 +22,7 @@ import { useToast } from '../context/ToastContext';
 import { Orders } from '../services/api';
 import { notifyOrderWhatsApp } from '../services/whatsapp';
 import { storage } from '../utils/storage';
+import { ALL_PRODUCTS } from '../data/catalog';
 
 export const Commande: React.FC = () => {
   const { user } = useAuth();
@@ -41,6 +43,22 @@ export const Commande: React.FC = () => {
 
   const totalCount = count();
 
+  // RÈGLE MÉTIER : Vérification des articles du panier contre le catalogue officiel CYM Pharma
+  // Détecte les anciens identifiants périmés, modifiés ou corrompus dans localStorage
+  const invalidCartItems = useMemo(() => {
+    return items.filter((item) => {
+      const id = String(item.id || '').trim().toLowerCase();
+      const ref = String(item.reference || '').trim().toLowerCase();
+      const match = ALL_PRODUCTS.find(
+        (p) =>
+          String(p.id).toLowerCase() === id ||
+          (p.reference && p.reference.toLowerCase() === id) ||
+          (ref && p.reference && p.reference.toLowerCase() === ref)
+      );
+      return !match;
+    });
+  }, [items]);
+
   const handleSendOrder = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -53,17 +71,43 @@ export const Commande: React.FC = () => {
       return;
     }
 
+    // Blocage si le panier contient des articles non reconnus
+    if (invalidCartItems.length > 0) {
+      const names = invalidCartItems.map((it) => `"${it.name}"`).join(', ');
+      showToast(
+        `Article(s) introuvable(s) dans le catalogue : ${names}. Veuillez les retirer de votre panier avant de valider votre commande.`,
+        'error'
+      );
+      return;
+    }
+
     isSubmittingRef.current = true;
     setLoading(true);
 
     const payload = {
-      items: items.map((item) => ({
-        productId: item.id,
-        name: item.name,
-        reference: item.reference,
-        unit: item.unit || item.conditionnement,
-        quantity: item.qty,
-      })),
+      items: items.map((item) => {
+        // Résolution précise de la clé primaire products.id
+        const matched = ALL_PRODUCTS.find(
+          (p) =>
+            String(p.id).toLowerCase() === String(item.id).toLowerCase() ||
+            (p.reference && p.reference.toLowerCase() === String(item.id).toLowerCase()) ||
+            (item.reference && p.reference && p.reference.toLowerCase() === String(item.reference).toLowerCase())
+        );
+        const resolvedId = matched ? String(matched.id) : String(item.id);
+        const resolvedRef = matched ? matched.reference : item.reference;
+        const resolvedCond = item.conditionnement || matched?.conditionnement;
+        const resolvedUnit = item.unit || matched?.unit || 'Unité';
+
+        return {
+          productId: resolvedId,
+          product_id: resolvedId,
+          name: item.name,
+          reference: resolvedRef,
+          unit: resolvedUnit,
+          conditionnement: resolvedCond,
+          quantity: item.qty,
+        };
+      }),
       establishment_name: establishmentName.trim(),
       shipping: { method: 'standard' },
       payment: { method: 'sur_devis' },
@@ -117,7 +161,6 @@ export const Commande: React.FC = () => {
       window.scrollTo({ top: 100, behavior: 'smooth' });
 
       // ── Notification WhatsApp admin (fire-and-forget, non bloquant) ──
-      // L'échec de la notification ne doit pas bloquer la confirmation client
       notifyOrderWhatsApp({
         orderId: String(createdOrder.id),
         orderNumber,
@@ -125,9 +168,8 @@ export const Commande: React.FC = () => {
         establishmentName: establishmentName.trim() || undefined,
         itemCount: items.length,
         clientPhone: user?.phone || undefined,
-        notifyClient: false, // Mettre à true pour confirmer aussi le client
+        notifyClient: false,
       }).catch((err) => {
-        // Erreur silencieuse — la commande est déjà validée
         console.warn('[Commande] Notification WhatsApp admin non envoyée :', err?.message || err);
       });
     } catch (err: any) {
@@ -229,6 +271,18 @@ export const Commande: React.FC = () => {
                       </Link>
                     </div>
 
+                    {invalidCartItems.length > 0 && (
+                      <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-3">
+                        <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                        <div className="space-y-1">
+                          <p className="font-bold">Articles obsolètes ou non répertoriés détectés</p>
+                          <p className="text-amber-800 leading-relaxed">
+                            {invalidCartItems.length} article(s) de votre panier ne correspondent à aucune référence du catalogue CYM Pharma. Veuillez les retirer pour finaliser votre commande en toute sécurité.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
                     {items.length === 0 ? (
                       <div id="empty-cart-msg" className="text-center py-12 space-y-3">
                         <ShoppingBag className="mx-auto text-slate-300 w-12 h-12" strokeWidth={1.5} />
@@ -242,61 +296,75 @@ export const Commande: React.FC = () => {
                       </div>
                     ) : (
                       <div id="order-items-list" className="space-y-3">
-                        {items.map((item) => (
-                          <div
-                            key={item.id}
-                            className="p-3.5 rounded-xl border border-slate-100 flex items-center justify-between gap-3 bg-slate-50/80 hover:bg-slate-50 transition"
-                          >
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs font-bold text-slate-900 leading-snug line-clamp-2">
-                                {item.name}
-                              </p>
-                              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                                <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg p-0.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => updateQty(item.id, -1)}
-                                    aria-label="Diminuer la quantité"
-                                    className="w-6 h-6 rounded flex items-center justify-center text-xs font-bold hover:bg-slate-100 text-slate-700 cursor-pointer"
-                                  >
-                                    −
-                                  </button>
-                                  <span className="text-xs font-bold px-2 text-slate-900">
-                                    {item.qty}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => updateQty(item.id, 1)}
-                                    aria-label="Augmenter la quantité"
-                                    className="w-6 h-6 rounded flex items-center justify-center text-xs font-bold hover:bg-slate-100 text-slate-700 cursor-pointer"
-                                  >
-                                    +
-                                  </button>
+                        {items.map((item) => {
+                          const isInvalid = invalidCartItems.some((inv) => inv.id === item.id);
+                          return (
+                            <div
+                              key={item.id}
+                              className={`p-3.5 rounded-xl border flex items-center justify-between gap-3 transition ${
+                                isInvalid
+                                  ? 'border-red-200 bg-red-50/70'
+                                  : 'border-slate-100 bg-slate-50/80 hover:bg-slate-50'
+                              }`}
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className="text-xs font-bold text-slate-900 leading-snug line-clamp-2">
+                                    {item.name}
+                                  </p>
+                                  {isInvalid && (
+                                    <span className="text-[10px] font-bold text-red-700 bg-red-100 border border-red-200 px-2 py-0.5 rounded">
+                                      Non répertorié au catalogue
+                                    </span>
+                                  )}
                                 </div>
+                                <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                                  <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg p-0.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => updateQty(item.id, -1)}
+                                      aria-label="Diminuer la quantité"
+                                      className="w-6 h-6 rounded flex items-center justify-center text-xs font-bold hover:bg-slate-100 text-slate-700 cursor-pointer"
+                                    >
+                                      −
+                                    </button>
+                                    <span className="text-xs font-bold px-2 text-slate-900">
+                                      {item.qty}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateQty(item.id, 1)}
+                                      aria-label="Augmenter la quantité"
+                                      className="w-6 h-6 rounded flex items-center justify-center text-xs font-bold hover:bg-slate-100 text-slate-700 cursor-pointer"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
 
-                                {item.reference && (
-                                  <span className="text-[10px] font-mono font-semibold text-slate-500 bg-slate-200/60 px-1.5 py-0.5 rounded">
-                                    Réf. {item.reference}
-                                  </span>
-                                )}
-                                {(item.conditionnement || item.unit) && (
-                                  <span className="text-[10px] text-slate-500 bg-slate-200/60 px-1.5 py-0.5 rounded">
-                                    {item.conditionnement || item.unit}
-                                  </span>
-                                )}
+                                  {item.reference && (
+                                    <span className="text-[10px] font-mono font-semibold text-slate-500 bg-slate-200/60 px-1.5 py-0.5 rounded">
+                                      Réf. {item.reference}
+                                    </span>
+                                  )}
+                                  {(item.conditionnement || item.unit) && (
+                                    <span className="text-[10px] text-slate-500 bg-slate-200/60 px-1.5 py-0.5 rounded">
+                                      {item.conditionnement || item.unit}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => remove(item.id)}
+                                  className="text-[11px] font-medium text-red-500 hover:text-red-700 hover:underline cursor-pointer"
+                                >
+                                  Supprimer
+                                </button>
                               </div>
                             </div>
-                            <div className="text-right shrink-0">
-                              <button
-                                type="button"
-                                onClick={() => remove(item.id)}
-                                className="text-[11px] font-medium text-red-500 hover:text-red-700 hover:underline cursor-pointer"
-                              >
-                                Supprimer
-                              </button>
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -388,7 +456,7 @@ export const Commande: React.FC = () => {
                   <button
                     id="validerCommandeBtn"
                     type="submit"
-                    disabled={loading || items.length === 0}
+                    disabled={loading || items.length === 0 || invalidCartItems.length > 0}
                     className="btn-primary w-full flex items-center justify-center gap-2 py-3 text-xs sm:text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                   >
                     {loading ? (
@@ -403,6 +471,12 @@ export const Commande: React.FC = () => {
                       </>
                     )}
                   </button>
+
+                  {invalidCartItems.length > 0 && (
+                    <p className="text-[11px] text-red-600 font-semibold text-center mt-1.5">
+                      Veuillez retirer les {invalidCartItems.length} article(s) non disponible(s) pour valider votre demande.
+                    </p>
+                  )}
 
                   <Link
                     to="/catalogue"

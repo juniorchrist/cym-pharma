@@ -103,11 +103,36 @@ app.post('/api/orders', async (req: Request, res: Response) => {
       json(res, 400, { success: false, message: 'Article invalide : nom ou quantité manquante.' }); return;
     }
   }
+
+  const sanitizedItems = items.map((it: any) => {
+    const rawId = String(it.productId || it.product_id || it.id || '').trim();
+    return {
+      productId: rawId || null,
+      product_id: rawId || null,
+      reference: it.reference || null,
+      name: it.name || 'Dispositif médical',
+      unit: it.unit || 'Unité',
+      conditionnement: it.conditionnement || null,
+      quantity: Math.max(1, parseInt(it.quantity || it.qty || 1, 10)),
+    };
+  });
+
   const { data: rpcResult, error: rpcError } = await supabaseAdmin.rpc('create_order_atomic', {
     p_order_data: { user_id: userId, establishment_name, shipping_address, shipping_city, notes },
-    p_items: items,
+    p_items: sanitizedItems,
   });
-  if (rpcError) { json(res, 500, { success: false, message: rpcError.message }); return; }
+  if (rpcError) {
+    const msg = rpcError.message || '';
+    if (msg.includes('order_items_product_id_fkey') || msg.includes('violates foreign key constraint')) {
+      json(res, 400, {
+        success: false,
+        message: 'Un des articles sélectionnés ne correspond pas à un produit valide du catalogue CYM Pharma.',
+      });
+      return;
+    }
+    json(res, 500, { success: false, message: msg });
+    return;
+  }
   if (!rpcResult?.order) { json(res, 500, { success: false, message: 'Commande non enregistrée.' }); return; }
 
   notifyNewOrder(rpcResult.order).catch((e) => console.warn('[CYM] Notif WhatsApp non-bloquante:', e?.message));

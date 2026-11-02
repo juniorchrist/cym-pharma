@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { CartItem } from '../types';
 import { storage } from '../utils/storage';
 import { useToast } from './ToastContext';
+import { ALL_PRODUCTS } from '../data/catalog';
 
 interface CartContextType {
   items: CartItem[];
@@ -52,30 +53,35 @@ export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     rawId: string | number,
     name: string,
     qtyParam: number = 1,
-    refOrQty?: any,
     referenceParam?: string,
     conditionnementParam?: string,
-    unitParam?: string
+    unitParam?: string,
+    imageParam?: string
   ) => {
-    const id = String(rawId);
+    const rawStr = String(rawId || '').trim();
 
-    // Support flexible arguments: if someone called add(id, name, price, qty, ref, cond)
-    let finalQty = 1;
-    let finalRef = referenceParam;
-    let finalCond = conditionnementParam;
-    let finalUnit = unitParam;
-
-    if (typeof refOrQty === 'number') {
-      // Legacy signature: add(id, name, price, qty, ref, cond)
-      finalQty = Math.max(1, refOrQty);
-      finalRef = referenceParam;
-      finalCond = conditionnementParam;
-    } else {
-      // Modern signature: add(id, name, qty, reference, conditionnement, unit)
-      finalQty = Math.max(1, qtyParam || 1);
-      finalRef = typeof refOrQty === 'string' ? refOrQty : referenceParam;
-      finalCond = conditionnementParam;
+    // Bloquer formellement les identifiants factices de réassort
+    if (!rawStr || rawStr.startsWith('reorder-')) {
+      console.warn('[Cart] Identifiant produit factice rejeté:', rawId);
+      showToast('Cet article n\'a pas pu être ajouté (identifiant invalide).', 'error');
+      return;
     }
+
+    // Recherche de correspondance dans le catalogue officiel CYM Pharma
+    const catalogProd = ALL_PRODUCTS.find(
+      (p) =>
+        String(p.id).toLowerCase() === rawStr.toLowerCase() ||
+        (p.reference && p.reference.toLowerCase() === rawStr.toLowerCase())
+    );
+
+    // RÈGLE MÉTIER : Toujours utiliser la véritable clé primaire id de public.products
+    const id = catalogProd ? String(catalogProd.id) : rawStr;
+    const finalName = name || catalogProd?.name || 'Dispositif médical';
+    const finalQty = Math.max(1, Number(qtyParam) || 1);
+    const finalRef = referenceParam || catalogProd?.reference || undefined;
+    const finalCond = conditionnementParam || catalogProd?.conditionnement || undefined;
+    const finalUnit = unitParam || catalogProd?.unit || undefined;
+    const finalImg = imageParam || catalogProd?.image || undefined;
 
     setItems((prev) => {
       const existing = prev.find((item) => item.id === id);
@@ -88,16 +94,17 @@ export const CartProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         ...prev,
         {
           id,
-          name,
+          name: finalName,
           qty: finalQty,
           reference: finalRef,
           conditionnement: finalCond,
           unit: finalUnit,
+          image: finalImg,
         },
       ];
     });
 
-    showToast(`"${name}" ajouté au bon de commande (${finalQty})`, 'success');
+    showToast(`"${finalName}" ajouté au bon de commande (${finalQty})`, 'success');
   };
 
   const remove = (rawId: string | number) => {

@@ -373,12 +373,36 @@ router.post('/orders', async (req, res) => {
     return;
   }
 
+  const sanitizedItems = items.map((it) => {
+    const rawId = String(it.productId || it.product_id || it.id || '').trim();
+    return {
+      productId: rawId || null,
+      product_id: rawId || null,
+      reference: it.reference || null,
+      name: it.name || 'Dispositif médical',
+      unit: it.unit || 'Unité',
+      conditionnement: it.conditionnement || null,
+      quantity: Math.max(1, parseInt(it.quantity || it.qty || 1, 10)),
+    };
+  });
+
   try {
     const { data: result, error } = await db.rpc('create_order_atomic', {
       p_order_data: { user_id: userId, establishment_name, shipping_address, shipping_city, notes },
-      p_items: items,
+      p_items: sanitizedItems,
     });
-    if (error) { send(res, 500, { success: false, message: error.message }); return; }
+    if (error) {
+      const msg = error.message || '';
+      if (msg.includes('order_items_product_id_fkey') || msg.includes('violates foreign key constraint')) {
+        send(res, 400, {
+          success: false,
+          message: 'Un des articles sélectionnés ne correspond pas à un produit valide du catalogue CYM Pharma.',
+        });
+        return;
+      }
+      send(res, 500, { success: false, message: msg });
+      return;
+    }
     if (!result?.order) { send(res, 500, { success: false, message: 'Commande non enregistrée.' }); return; }
 
     // Alerte WhatsApp asynchrone non-bloquante

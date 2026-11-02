@@ -26,6 +26,7 @@ import { useToast } from '../context/ToastContext';
 import { Users, Orders } from '../services/api';
 import { storage } from '../utils/storage';
 import { formatCurrency } from '../utils/currency';
+import { ALL_PRODUCTS } from '../data/catalog';
 import { Order } from '../types';
 
 type PanelKey = 'overview' | 'commandes' | 'suivis' | 'factures' | 'profil' | 'support';
@@ -177,14 +178,66 @@ export const Dashboard: React.FC = () => {
   };
 
   const handleReorder = (orderRef: string) => {
-    add(`reorder-${orderRef}`, `Commande ${orderRef} (Réassort)`, 1, orderRef);
-    showToast(`Les articles de la commande ${orderRef} ont été ajoutés à votre panier.`, 'success');
-    openDrawer();
+    const targetOrder = orders.find(
+      (o) => String(o.orderNumber || o.id) === orderRef || String(o.order_number || o.id) === orderRef
+    );
+
+    if (!targetOrder || !targetOrder.items || targetOrder.items.length === 0) {
+      showToast(`Impossible de retrouver les articles de la commande ${orderRef}.`, 'error');
+      return;
+    }
+
+    let addedCount = 0;
+    let missingCount = 0;
+
+    for (const it of targetOrder.items) {
+      const rawProdId = String(it.product_id || it.productId || '').trim();
+      const rawRef = String(it.reference || it.product_ref || '').trim();
+      const rawName = String(it.name || it.product_name || '').trim();
+
+      // Résoudre le véritable produit du catalogue
+      const foundProd = ALL_PRODUCTS.find(
+        (p) =>
+          (rawProdId && String(p.id).toLowerCase() === rawProdId.toLowerCase()) ||
+          (rawRef && p.reference && p.reference.toLowerCase() === rawRef.toLowerCase()) ||
+          (rawName && p.name.toLowerCase() === rawName.toLowerCase())
+      );
+
+      if (foundProd) {
+        add(
+          foundProd.id,
+          foundProd.name,
+          it.quantity || it.qty || 1,
+          foundProd.reference,
+          foundProd.conditionnement,
+          foundProd.unit
+        );
+        addedCount++;
+      } else {
+        missingCount++;
+      }
+    }
+
+    if (addedCount > 0) {
+      showToast(`${addedCount} article(s) de la commande ${orderRef} ajouté(s) à votre panier.`, 'success');
+      if (missingCount > 0) {
+        showToast(`${missingCount} article(s) non disponible(s) n'ont pas pu être ajoutés.`, 'warning');
+      }
+      openDrawer();
+    } else {
+      showToast('Aucun article de cette commande n\'est actuellement disponible au catalogue.', 'error');
+    }
   };
 
   const handleReorderProduct = (id: string, name: string) => {
-    add(id, name, 1);
-    showToast(`"${name}" ajouté au panier.`, 'success');
+    const prod = ALL_PRODUCTS.find((p) => String(p.id) === id || (p.reference && p.reference === id));
+    if (prod) {
+      add(prod.id, prod.name, 1, prod.reference, prod.conditionnement, prod.unit);
+      showToast(`"${prod.name}" ajouté au panier.`, 'success');
+      openDrawer();
+    } else {
+      showToast(`Le produit "${name}" n'est plus disponible dans le catalogue.`, 'error');
+    }
   };
 
   const handleUrgentAlert = () => {
@@ -222,20 +275,30 @@ export const Dashboard: React.FC = () => {
     return s.includes('livraison') || s.includes('expédition') || s === 'shipped';
   }) || null;
 
-  // Produits de réapprovisionnement rapide — uniquement depuis l'historique réel
+  // Produits de réapprovisionnement rapide — uniquement depuis les produits réels et vérifiés du catalogue
   const reorderProducts = (() => {
     const seen = new Set<string>();
     const result: Array<{ id: string; name: string; unit?: string; ref?: string }> = [];
     for (const o of orders) {
       for (const it of (o.items || [])) {
-        const key = String(it.product_id || it.productId || it.name || '');
-        if (key && !seen.has(key)) {
-          seen.add(key);
+        const rawId = String(it.product_id || it.productId || '').trim();
+        const rawRef = String(it.reference || it.product_ref || '').trim();
+        const rawName = String(it.name || it.product_name || '').trim();
+
+        const match = ALL_PRODUCTS.find(
+          (p) =>
+            (rawId && String(p.id).toLowerCase() === rawId.toLowerCase()) ||
+            (rawRef && p.reference && p.reference.toLowerCase() === rawRef.toLowerCase()) ||
+            (rawName && p.name.toLowerCase() === rawName.toLowerCase())
+        );
+
+        if (match && !seen.has(String(match.id))) {
+          seen.add(String(match.id));
           result.push({
-            id: key,
-            name: it.name || `Produit (réf. ${key})`,
-            unit: it.unit || 'Unité',
-            ref: it.reference || String(it.product_id || it.productId || ''),
+            id: String(match.id),
+            name: match.name,
+            unit: match.unit || 'Unité',
+            ref: match.reference || undefined,
           });
         }
       }

@@ -534,14 +534,18 @@ export const Orders = {
           notes: payload.notes || payload.shippingAddress?.notes || '',
         };
 
-        const itemsData = payload.items.map((it) => ({
-          productId: it.productId ? String(it.productId) : null,
-          reference: it.reference || null,
-          name: it.name || 'Dispositif médical',
-          unit: it.unit || 'Unité',
-          conditionnement: it.conditionnement || null,
-          quantity: it.quantity || 1,
-        }));
+        const itemsData = payload.items.map((it: any) => {
+          const rawId = String(it.productId || it.product_id || it.id || '').trim();
+          return {
+            productId: rawId || null,
+            product_id: rawId || null,
+            reference: it.reference || null,
+            name: it.name || 'Dispositif médical',
+            unit: it.unit || 'Unité',
+            conditionnement: it.conditionnement || null,
+            quantity: Math.max(1, Number(it.quantity || it.qty || 1)),
+          };
+        });
 
         // Appel RPC atomique : commande + lignes + historique dans 1 seule transaction ACID
         const { data: rpcResult, error: rpcError } = await supabase.rpc('create_order_atomic', {
@@ -550,7 +554,14 @@ export const Orders = {
         });
 
         if (rpcError) {
-          return { success: false, message: rpcError.message || 'Erreur lors de la création de la commande.' };
+          const msg = rpcError.message || '';
+          if (msg.includes('order_items_product_id_fkey') || msg.includes('violates foreign key constraint')) {
+            return {
+              success: false,
+              message: 'Un des articles sélectionnés ne correspond pas à un produit valide du catalogue CYM Pharma. Veuillez retirer les articles obsolètes de votre panier.',
+            };
+          }
+          return { success: false, message: msg || 'Erreur lors de la création de la commande.' };
         }
 
         if (!rpcResult || !rpcResult.order) {
@@ -592,8 +603,8 @@ export const Orders = {
             item_count: (o.items || []).length,
             items: (o.items || []).map((it: any) => ({
               ...it,
-              productId: it.product_id || it.id,
-              product_id: it.product_id || it.id,
+              productId: it.product_id || null,
+              product_id: it.product_id || null,
               quantity: Number(it.quantity) || 1,
               unit_price: Number(it.unit_price) || 0,
               line_total: Number(it.line_total) || 0,
@@ -627,8 +638,8 @@ export const Orders = {
             item_count: (data.items || []).length,
             items: (data.items || []).map((it: any) => ({
               ...it,
-              productId: it.product_id || it.id,
-              product_id: it.product_id || it.id,
+              productId: it.product_id || null,
+              product_id: it.product_id || null,
               quantity: Number(it.quantity) || 1,
               unit_price: Number(it.unit_price) || 0,
               line_total: Number(it.line_total) || 0,

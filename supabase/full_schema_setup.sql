@@ -321,6 +321,24 @@ BEGIN
     RAISE EXCEPTION 'La commande doit comporter au moins un article.';
   END IF;
 
+  -- ── ÉTAPE 1 : VALIDATION PRÉALABLE STRICTE DE TOUS LES PRODUITS ──
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+  LOOP
+    IF COALESCE((v_item->>'quantity')::INT, 0) <= 0 THEN
+      RAISE EXCEPTION 'Quantité invalide (%s) pour l''article: %s', COALESCE(v_item->>'quantity', '0'), COALESCE(v_item->>'name', 'Inconnu');
+    END IF;
+
+    IF NULLIF(TRIM(COALESCE(v_item->>'productId', v_item->>'product_id', '')), '') IS NOT NULL THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM public.products
+        WHERE id = TRIM(COALESCE(v_item->>'productId', v_item->>'product_id'))
+           OR reference = TRIM(COALESCE(v_item->>'productId', v_item->>'product_id'))
+      ) THEN
+        RAISE EXCEPTION 'Produit introuvable dans le catalogue : "%s". Veuillez actualiser votre panier.', COALESCE(v_item->>'name', 'Dispositif médical');
+      END IF;
+    END IF;
+  END LOOP;
+
   -- Génération du numéro de commande unique (ex: CMD-2026-4821)
   v_order_number := 'CMD-' || TO_CHAR(NOW(), 'YYYY') || '-' || LPAD(FLOOR(RANDOM() * 9000 + 1000)::TEXT, 4, '0');
   v_order_id := v_order_number;
@@ -379,7 +397,13 @@ BEGIN
       currency
     ) VALUES (
       v_order_id,
-      NULLIF(v_item->>'productId', ''),
+      (
+        SELECT id FROM public.products
+        WHERE id = TRIM(COALESCE(v_item->>'productId', v_item->>'product_id', ''))
+           OR reference = TRIM(COALESCE(v_item->>'productId', v_item->>'product_id', ''))
+           OR (NULLIF(TRIM(COALESCE(v_item->>'reference', '')), '') IS NOT NULL AND reference = TRIM(v_item->>'reference'))
+        LIMIT 1
+      ),
       v_item->>'reference',
       COALESCE(v_item->>'name', 'Dispositif médical'),
       COALESCE(v_item->>'unit', 'Unité'),
