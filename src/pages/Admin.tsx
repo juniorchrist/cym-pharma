@@ -1072,8 +1072,14 @@ export const Admin: React.FC = () => {
           >
             <Menu className="w-5 h-5" strokeWidth={1.75} />
           </button>
-          <Link to="/accueil" className="flex items-center gap-2" aria-label="CYM Pharma — Accueil">
-            <img src="/LOGO.png" alt="CYM Pharma" className="h-9 sm:h-10 w-auto object-contain" style={{ filter: "none" }} />
+          <Link to="/accueil" className="shrink-0 flex items-center gap-2" aria-label="CYM Pharma — Accueil">
+            <img
+              src="/LOGO-cympharma-trimmed.png"
+              alt="CYM Pharma"
+              className="w-[130px] sm:w-[150px] h-auto max-h-[44px] object-contain shrink-0 block"
+              style={{ objectFit: 'contain', objectPosition: 'center left', filter: 'none' }}
+              onError={(e) => { (e.currentTarget as HTMLImageElement).src = '/LOGO.png'; }}
+            />
           </Link>
           <div className="hidden sm:flex items-center gap-2 pl-3 border-l border-slate-200">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>

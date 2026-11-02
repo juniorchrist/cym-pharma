@@ -15,6 +15,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
 import { useScrolled } from '../../hooks/useScrolled';
 import { storage } from '../../utils/storage';
+import logoCymPharma from '../../assets/images/LOGO-cympharma-trimmed.png';
 
 /* ─── Utilitaire : initiales de l'utilisateur ─── */
 function getInitials(user: { name?: string; establishment_name?: string; org?: string; email?: string } | null): string {
@@ -234,7 +235,7 @@ export const Navbar: React.FC = () => {
         <div className="px-3 sm:px-6 pt-3">
           <nav
             id="topNavbar"
-            className={`relative mx-auto flex max-w-6xl items-center justify-between rounded-full border border-white/60 bg-white/80 px-4 py-2.5 shadow-md backdrop-blur-xl transition-shadow duration-200 ${
+            className={`relative mx-auto flex max-w-6xl items-center justify-between rounded-full border border-white/60 bg-white/80 px-3.5 sm:px-5 py-2 sm:py-2.5 shadow-md backdrop-blur-xl transition-shadow duration-200 ${
               scrolled ? 'scrolled shadow-lg' : ''
             }`}
           >
@@ -244,19 +245,33 @@ export const Navbar: React.FC = () => {
               onClose={() => setMobileSearchOpen(false)}
             />
 
-            {/* ── Logo ── */}
+            {/* ── Logo Principal CYM Pharma ── */}
             <Link
               to="/accueil"
-              className="shrink-0 flex items-center"
+              className="shrink-0 flex items-center justify-start focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] rounded-lg"
               aria-label="CYM Pharma — Accueil"
             >
               {!logoError ? (
                 <img
-                  src="/LOGO.png"
+                  src={logoCymPharma}
                   alt="CYM Pharma"
-                  className="h-10 sm:h-11 w-auto object-contain"
-                  style={{ filter: 'none' }}
-                  onError={() => setLogoError(true)}
+                  className="w-[145px] sm:w-[155px] lg:w-[180px] h-auto max-h-[48px] sm:max-h-[50px] object-contain shrink-0 block"
+                  style={{
+                    objectFit: 'contain',
+                    objectPosition: 'center left',
+                    display: 'block',
+                    flexShrink: 0,
+                    filter: 'none',
+                  }}
+                  onError={(e) => {
+                    const img = e.currentTarget;
+                    if (!img.getAttribute('data-fallback')) {
+                      img.setAttribute('data-fallback', '1');
+                      img.src = '/LOGO-cympharma-trimmed.png';
+                    } else {
+                      setLogoError(true);
+                    }
+                  }}
                 />
               ) : (
                 <span className="logo-fallback">CYM Pharma</span>
