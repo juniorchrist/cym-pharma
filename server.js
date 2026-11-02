@@ -655,18 +655,28 @@ router.post('/admin/orders/:id/save-pricing', async (req, res) => {
   const adminId = await requireAdmin(req, res);
   if (!adminId) return;
   const { items } = req.body;
-  let total = 0;
+  const { data: existingItems } = await db.from('order_items').select('*').eq('order_id', req.params.id);
+  const rows = existingItems || [];
+
   if (Array.isArray(items)) {
     for (const it of items) {
-      if (it.productId) {
-        const uPrice = Number(it.unit_price) || 0;
-        await db.from('order_items').update({ unit_price: uPrice }).eq('order_id', req.params.id).or(`product_id.eq.${it.productId},id.eq.${it.productId}`);
+      const uPrice = Number(it.unit_price) || 0;
+      let matched = rows.find(r =>
+        (it.itemId && String(r.id) === String(it.itemId)) ||
+        (it.productId && r.product_id && String(r.product_id) === String(it.productId)) ||
+        (it.productId && !isNaN(Number(it.productId)) && Number(r.id) === Number(it.productId)) ||
+        (it.reference && r.reference === it.reference)
+      );
+      if (!matched && rows.length === 1 && items.length === 1) matched = rows[0];
+      if (matched) {
+        const qty = Number(matched.quantity) || 1;
+        await db.from('order_items').update({ unit_price: uPrice, line_total: uPrice * qty }).eq('id', matched.id);
       }
     }
   }
   const { data: order } = await db.from('orders').select('*, items:order_items(*)').eq('id', req.params.id).maybeSingle();
   if (order && Array.isArray(order.items)) {
-    total = order.items.reduce((acc, it) => acc + (Number(it.unit_price) || 0) * (Number(it.quantity) || 1), 0);
+    const total = order.items.reduce((acc, it) => acc + (Number(it.unit_price) || 0) * (Number(it.quantity) || 1), 0);
     await db.from('orders').update({ total, subtotal: total, updated_at: new Date().toISOString() }).eq('id', req.params.id);
   }
   send(res, 200, { success: true, data: { order } });
@@ -677,13 +687,24 @@ router.post('/admin/orders/:id/quote', async (req, res) => {
   if (!adminId) return;
   const { items } = req.body;
   let total = 0;
+  const { data: existingItems } = await db.from('order_items').select('*').eq('order_id', req.params.id);
+  const rows = existingItems || [];
+
   if (Array.isArray(items)) {
     for (const it of items) {
-      const pid = it.productId || it.product_id;
-      if (pid) {
-        const uPrice = Number(it.unit_price) || 0;
-        await db.from('order_items').update({ unit_price: uPrice, line_total: uPrice * (Number(it.quantity) || 1) }).eq('order_id', req.params.id).or(`product_id.eq.${pid},id.eq.${it.id || pid}`);
-        total += uPrice * (Number(it.quantity) || 1);
+      const uPrice = Number(it.unit_price) || 0;
+      let matched = rows.find(r =>
+        (it.itemId && String(r.id) === String(it.itemId)) ||
+        (it.productId && r.product_id && String(r.product_id) === String(it.productId)) ||
+        (it.productId && !isNaN(Number(it.productId)) && Number(r.id) === Number(it.productId)) ||
+        (it.reference && r.reference === it.reference)
+      );
+      if (!matched && rows.length === 1 && items.length === 1) matched = rows[0];
+      const qty = matched ? (Number(matched.quantity) || 1) : (Number(it.quantity) || 1);
+      const lineTotal = uPrice * qty;
+      total += lineTotal;
+      if (matched) {
+        await db.from('order_items').update({ unit_price: uPrice, line_total: lineTotal }).eq('id', matched.id);
       }
     }
   }
@@ -705,12 +726,24 @@ router.post('/admin/orders/:id/validate-pricing', async (req, res) => {
   if (!adminId) return;
   const { items } = req.body;
   let total = 0;
+  const { data: existingItems } = await db.from('order_items').select('*').eq('order_id', req.params.id);
+  const rows = existingItems || [];
+
   if (Array.isArray(items)) {
     for (const it of items) {
-      if (it.productId) {
-        const uPrice = Number(it.unit_price) || 0;
-        await db.from('order_items').update({ unit_price: uPrice }).eq('order_id', req.params.id).or(`product_id.eq.${it.productId},id.eq.${it.productId}`);
-        total += uPrice * (Number(it.quantity) || 1);
+      const uPrice = Number(it.unit_price) || 0;
+      let matched = rows.find(r =>
+        (it.itemId && String(r.id) === String(it.itemId)) ||
+        (it.productId && r.product_id && String(r.product_id) === String(it.productId)) ||
+        (it.productId && !isNaN(Number(it.productId)) && Number(r.id) === Number(it.productId)) ||
+        (it.reference && r.reference === it.reference)
+      );
+      if (!matched && rows.length === 1 && items.length === 1) matched = rows[0];
+      const qty = matched ? (Number(matched.quantity) || 1) : (Number(it.quantity) || 1);
+      const lineTotal = uPrice * qty;
+      total += lineTotal;
+      if (matched) {
+        await db.from('order_items').update({ unit_price: uPrice, line_total: lineTotal }).eq('id', matched.id);
       }
     }
   }

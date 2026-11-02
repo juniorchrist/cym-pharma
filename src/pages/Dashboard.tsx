@@ -24,6 +24,7 @@ import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useToast } from '../context/ToastContext';
 import { Users, Orders } from '../services/api';
+import { supabase, isSupabaseConfigured } from '../services/supabase';
 import { storage } from '../utils/storage';
 import { formatCurrency } from '../utils/currency';
 import { normalizeOrderStatus, getOrderStatus, isPendingQuote, isQuoted } from '../domain/orderStatus';
@@ -156,6 +157,32 @@ export const Dashboard: React.FC = () => {
     // Heartbeat présence initial
     Users.ping();
 
+    // Souscription Supabase Realtime pour actualiser instantanément l'affichage dès que l'admin chiffre la commande
+    let channel: any = null;
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        channel = supabase
+          .channel('client-orders-realtime')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'orders' },
+            () => {
+              fetchOrders(true);
+            }
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'order_items' },
+            () => {
+              fetchOrders(true);
+            }
+          )
+          .subscribe();
+      } catch (rtErr) {
+        console.warn('[Dashboard] Realtime subscription notice:', rtErr);
+      }
+    }
+
     // Rechargement au retour sur l'onglet
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
@@ -166,19 +193,22 @@ export const Dashboard: React.FC = () => {
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('focus', handleVisibility);
 
-    // Polling toutes les 45 secondes (uniquement si l'onglet est visible)
+    // Polling toutes les 20 secondes (uniquement si l'onglet est visible)
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible') {
         fetchOrders(true);
         Users.ping();
       }
-    }, 45000);
+    }, 20000);
 
     return () => {
       isMounted = false;
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleVisibility);
       clearInterval(interval);
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
     };
   }, [showToast]);
 

@@ -604,20 +604,28 @@ export const Orders = {
 
         const { data, error } = await query.order('created_at', { ascending: false });
         if (!error && data) {
-          const mappedOrders: Order[] = data.map((o: any) => ({
-            ...o,
-            orderNumber: o.order_number || o.id,
-            order_number: o.order_number || o.id,
-            item_count: (o.items || []).length,
-            items: (o.items || []).map((it: any) => ({
+          const mappedOrders: Order[] = data.map((o: any) => {
+            const mappedItems = (o.items || []).map((it: any) => ({
               ...it,
               productId: it.product_id || null,
               product_id: it.product_id || null,
               quantity: Number(it.quantity) || 1,
               unit_price: Number(it.unit_price) || 0,
-              line_total: Number(it.line_total) || 0,
-            })),
-          }));
+              line_total: Number(it.line_total) || ((Number(it.unit_price) || 0) * (Number(it.quantity) || 1)),
+            }));
+            const computedItemsTotal = mappedItems.reduce((acc: number, it: any) => acc + (it.line_total || 0), 0);
+            const resolvedTotal = (typeof o.total === 'number' && o.total > 0) ? o.total : (computedItemsTotal > 0 ? computedItemsTotal : (o.total || 0));
+
+            return {
+              ...o,
+              orderNumber: o.order_number || o.id,
+              order_number: o.order_number || o.id,
+              total: resolvedTotal,
+              subtotal: resolvedTotal,
+              item_count: mappedItems.length,
+              items: mappedItems,
+            };
+          });
           return { success: true, data: { orders: mappedOrders } };
         }
       } catch (err: any) {
@@ -639,19 +647,25 @@ export const Orders = {
           .maybeSingle();
 
         if (!error && data) {
+          const mappedItems = (data.items || []).map((it: any) => ({
+            ...it,
+            productId: it.product_id || null,
+            product_id: it.product_id || null,
+            quantity: Number(it.quantity) || 1,
+            unit_price: Number(it.unit_price) || 0,
+            line_total: Number(it.line_total) || ((Number(it.unit_price) || 0) * (Number(it.quantity) || 1)),
+          }));
+          const computedItemsTotal = mappedItems.reduce((acc: number, it: any) => acc + (it.line_total || 0), 0);
+          const resolvedTotal = (typeof data.total === 'number' && data.total > 0) ? data.total : (computedItemsTotal > 0 ? computedItemsTotal : (data.total || 0));
+
           const mappedOrder: Order = {
             ...data,
             orderNumber: data.order_number || data.id,
             order_number: data.order_number || data.id,
-            item_count: (data.items || []).length,
-            items: (data.items || []).map((it: any) => ({
-              ...it,
-              productId: it.product_id || null,
-              product_id: it.product_id || null,
-              quantity: Number(it.quantity) || 1,
-              unit_price: Number(it.unit_price) || 0,
-              line_total: Number(it.line_total) || 0,
-            })),
+            total: resolvedTotal,
+            subtotal: resolvedTotal,
+            item_count: mappedItems.length,
+            items: mappedItems,
           };
           return { success: true, data: { order: mappedOrder } };
         }
@@ -1337,10 +1351,11 @@ export const Admin = {
             const lineTotal = unitPrice * qty;
 
             return {
+              itemId: it.id,
               productId: it.product_id || it.id,
-              name: it.name || 'Dispositif médical',
+              name: it.name || it.product_name || 'Dispositif médical',
               reference: it.reference || '',
-              unit: it.unit || 'Unité',
+              unit: it.unit || it.conditionnement || 'Unité',
               quantity: qty,
               ref_price: refPrice > 0 ? refPrice : null,
               unit_price: currentUnitPrice > 0 ? currentUnitPrice : (refPrice > 0 ? refPrice : null),
@@ -1378,42 +1393,75 @@ export const Admin = {
 
   async saveOrderPricing(
     orderId: string | number,
-    items: { productId: string | number; unit_price: number; reference?: string }[]
+    items: { itemId?: number | string; productId: string | number; unit_price: number; reference?: string; quantity?: number }[]
   ): Promise<ApiResponse<{ order: Order }>> {
     if (isSupabaseConfigured() && supabase) {
       try {
+        // 1. Charger toutes les lignes actuelles de la commande pour un matching direct en mémoire
+        const { data: itemRows, error: fetchErr } = await supabase
+          .from('order_items')
+          .select('*')
+          .eq('order_id', String(orderId));
+
+        if (fetchErr) {
+          console.warn('[CYM] Erreur lecture order_items dans saveOrderPricing:', fetchErr);
+        }
+
+        const existingList = itemRows || [];
         let computedTotal = 0;
 
         for (const item of items) {
           const unitPrice = Number(item.unit_price) || 0;
-          // Trouver la ligne de commande correspondante
-          const { data: itemRows } = await supabase
-            .from('order_items')
-            .select('id, quantity')
-            .eq('order_id', String(orderId))
-            .or(`product_id.eq.${item.productId},id.eq.${item.productId}`);
 
-          if (itemRows && itemRows.length > 0) {
-            for (const row of itemRows) {
-              const lineTotal = unitPrice * (Number(row.quantity) || 1);
-              computedTotal += lineTotal;
-              await supabase
-                .from('order_items')
-                .update({ unit_price: unitPrice, line_total: lineTotal })
-                .eq('id', row.id);
+          // Recherche multi-critères fiable sans risque d'erreur de cast PostgreSQL sur id/bigint
+          let matchedRow = existingList.find((row: any) => {
+            if (item.itemId && String(row.id) === String(item.itemId)) return true;
+            if (item.productId && row.product_id && String(row.product_id) === String(item.productId)) return true;
+            if (item.productId && !isNaN(Number(item.productId)) && Number(row.id) === Number(item.productId)) return true;
+            if (item.reference && row.reference && row.reference === item.reference) return true;
+            return false;
+          });
+
+          if (!matchedRow && existingList.length === 1 && items.length === 1) {
+            matchedRow = existingList[0];
+          }
+
+          if (matchedRow) {
+            const qty = Number(matchedRow.quantity) || Number(item.quantity) || 1;
+            const lineTotal = unitPrice * qty;
+            computedTotal += lineTotal;
+
+            const { error: itemUpdateErr } = await supabase
+              .from('order_items')
+              .update({ unit_price: unitPrice, line_total: lineTotal })
+              .eq('id', matchedRow.id);
+
+            if (itemUpdateErr) {
+              console.warn(`[CYM] Erreur update order_items #${matchedRow.id}:`, itemUpdateErr);
             }
+          } else {
+            const qty = Number(item.quantity) || 1;
+            computedTotal += unitPrice * qty;
           }
         }
 
-        // Mettre à jour la commande
-        await supabase
+        if (computedTotal === 0 && items.length > 0) {
+          computedTotal = items.reduce((acc, it) => acc + (Number(it.unit_price) || 0) * (Number(it.quantity) || 1), 0);
+        }
+
+        const now = new Date().toISOString();
+        const { error: orderUpdateErr } = await supabase
           .from('orders')
           .update({
             subtotal: computedTotal,
             total: computedTotal,
-            updated_at: new Date().toISOString(),
+            updated_at: now,
           })
           .eq('id', String(orderId));
+
+        if (orderUpdateErr) {
+          console.warn('[CYM] Erreur update orders Supabase:', orderUpdateErr);
+        }
 
         const { data: updatedOrder } = await supabase
           .from('orders')
@@ -1421,7 +1469,17 @@ export const Admin = {
           .eq('id', String(orderId))
           .single();
 
-        return { success: true, data: { order: updatedOrder as Order } };
+        return {
+          success: true,
+          data: {
+            order: {
+              ...updatedOrder,
+              orderNumber: updatedOrder?.order_number || updatedOrder?.id,
+              total: computedTotal,
+              subtotal: computedTotal,
+            } as Order,
+          },
+        };
       } catch (err: any) {
         console.warn('[CYM] Supabase saveOrderPricing fallback to HTTP:', err);
       }
@@ -1435,56 +1493,95 @@ export const Admin = {
 
   async validateOrderPricing(
     orderId: string | number,
-    items: { productId: string | number; unit_price: number; reference?: string }[]
+    items: { itemId?: number | string; productId: string | number; unit_price: number; reference?: string; quantity?: number }[]
   ): Promise<ApiResponse<{ order: Order }>> {
     if (isSupabaseConfigured() && supabase) {
       try {
+        // 1. Charger toutes les lignes actuelles de la commande pour un matching direct sans erreur de cast SQL
+        const { data: itemRows, error: fetchErr } = await supabase
+          .from('order_items')
+          .select('*')
+          .eq('order_id', String(orderId));
+
+        if (fetchErr) {
+          console.warn('[CYM] Erreur lecture order_items dans validateOrderPricing:', fetchErr);
+        }
+
+        const existingList = itemRows || [];
         let computedTotal = 0;
 
         for (const item of items) {
           const unitPrice = Number(item.unit_price) || 0;
-          const { data: itemRows } = await supabase
-            .from('order_items')
-            .select('id, quantity')
-            .eq('order_id', String(orderId))
-            .or(`product_id.eq.${item.productId},id.eq.${item.productId}`);
 
-          if (itemRows && itemRows.length > 0) {
-            for (const row of itemRows) {
-              const lineTotal = unitPrice * (Number(row.quantity) || 1);
-              computedTotal += lineTotal;
-              await supabase
-                .from('order_items')
-                .update({ unit_price: unitPrice, line_total: lineTotal })
-                .eq('id', row.id);
-            }
+          // Recherche multi-critères fiable sans risque d'erreur de cast PostgreSQL sur id/bigint
+          let matchedRow = existingList.find((row: any) => {
+            if (item.itemId && String(row.id) === String(item.itemId)) return true;
+            if (item.productId && row.product_id && String(row.product_id) === String(item.productId)) return true;
+            if (item.productId && !isNaN(Number(item.productId)) && Number(row.id) === Number(item.productId)) return true;
+            if (item.reference && row.reference && row.reference === item.reference) return true;
+            return false;
+          });
+
+          if (!matchedRow && existingList.length === 1 && items.length === 1) {
+            matchedRow = existingList[0];
           }
+
+          if (matchedRow) {
+            const qty = Number(matchedRow.quantity) || Number(item.quantity) || 1;
+            const lineTotal = unitPrice * qty;
+            computedTotal += lineTotal;
+
+            const { error: itemUpdateErr } = await supabase
+              .from('order_items')
+              .update({ unit_price: unitPrice, line_total: lineTotal })
+              .eq('id', matchedRow.id);
+
+            if (itemUpdateErr) {
+              console.warn(`[CYM] Erreur update order_items #${matchedRow.id}:`, itemUpdateErr);
+            }
+          } else {
+            const qty = Number(item.quantity) || 1;
+            computedTotal += unitPrice * qty;
+          }
+        }
+
+        if (computedTotal === 0 && items.length > 0) {
+          computedTotal = items.reduce((acc, it) => acc + (Number(it.unit_price) || 0) * (Number(it.quantity) || 1), 0);
         }
 
         const now = new Date().toISOString();
         const invoiceNum = `FAC-${String(orderId).replace('CMD-', '')}`;
 
-        await supabase
+        const { error: orderUpdateErr } = await supabase
           .from('orders')
           .update({
             status: 'quoted',
             subtotal: computedTotal,
             total: computedTotal,
             priced_at: now,
+            quoted_at: now,
             invoice_number: invoiceNum,
             invoice_date: now,
             updated_at: now,
           })
           .eq('id', String(orderId));
 
+        if (orderUpdateErr) {
+          console.warn('[CYM] Erreur update orders Supabase:', orderUpdateErr);
+        }
+
         // Enregistrer dans l'historique
-        const userRes = await supabase.auth.getUser();
-        await supabase.from('order_status_history').insert({
-          order_id: String(orderId),
-          status: 'quoted',
-          note: `Chiffrage validé : ${computedTotal} FCFA`,
-          changed_by: userRes.data.user?.id || null,
-        });
+        try {
+          const userRes = await supabase.auth.getUser();
+          await supabase.from('order_status_history').insert({
+            order_id: String(orderId),
+            status: 'quoted',
+            note: `Chiffrage validé : ${computedTotal} FCFA`,
+            changed_by: userRes.data?.user?.id || null,
+          });
+        } catch (histErr) {
+          console.warn('[CYM] Note historique statut:', histErr);
+        }
 
         const { data: updatedOrder } = await supabase
           .from('orders')
@@ -1492,7 +1589,18 @@ export const Admin = {
           .eq('id', String(orderId))
           .single();
 
-        return { success: true, data: { order: updatedOrder as Order } };
+        return {
+          success: true,
+          data: {
+            order: {
+              ...updatedOrder,
+              orderNumber: updatedOrder?.order_number || updatedOrder?.id,
+              total: computedTotal,
+              subtotal: computedTotal,
+              status: 'quoted',
+            } as Order,
+          },
+        };
       } catch (err: any) {
         console.warn('[CYM] Supabase validateOrderPricing fallback to HTTP:', err);
       }

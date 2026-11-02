@@ -159,6 +159,7 @@ export interface OrderItem {
 }
 
 export interface PricingLine {
+  itemId?: number | string;
   productId: string | number;
   name: string;
   reference?: string;

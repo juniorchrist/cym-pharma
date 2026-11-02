@@ -295,10 +295,11 @@ if ($path === '/presence/ping' && $method === 'POST') {
     json_response(['success' => true, 'timestamp' => date('c')]);
 }
 
-// 8. Chiffrage atomique d'une commande : POST /admin/orders/{id}/quote
-if (preg_match('#^/admin/orders/([^/]+)/quote$#', $path, $matches) && $method === 'POST') {
+// 8. Chiffrage atomique d'une commande : POST /admin/orders/{id}/quote ou /validate-pricing ou /save-pricing
+if (preg_match('#^/admin/orders/([^/]+)/(quote|validate-pricing|save-pricing)$#', $path, $matches) && $method === 'POST') {
     require_admin($jwtSecret);
     $orderId = $matches[1];
+    $isDraft = ($matches[2] === 'save-pricing');
     $items = $body['items'] ?? [];
     if (empty($items)) {
         json_error("Au moins un article doit être chiffré.", 422);
@@ -306,34 +307,36 @@ if (preg_match('#^/admin/orders/([^/]+)/quote$#', $path, $matches) && $method ==
     try {
         $pdo->beginTransaction();
         $total = 0;
-        $updItem = $pdo->prepare("UPDATE order_items SET unit_price = :price, line_total = :total WHERE order_id = :oid AND (product_id = :pid OR id = :iid)");
         foreach ($items as $it) {
             $pid = $it['productId'] ?? $it['product_id'] ?? null;
-            $iid = $it['id'] ?? null;
+            $iid = $it['itemId'] ?? $it['id'] ?? null;
             $price = (float)($it['unit_price'] ?? 0);
             $qty = (int)($it['quantity'] ?? 1);
             $lineTotal = $price * $qty;
             $total += $lineTotal;
-            $updItem->execute([
-                ':price' => $price,
-                ':total' => $lineTotal,
-                ':oid'   => $orderId,
-                ':pid'   => $pid,
-                ':iid'   => $iid,
-            ]);
+
+            if (!empty($iid)) {
+                $updItem = $pdo->prepare("UPDATE order_items SET unit_price = :price, line_total = :total WHERE id = :iid AND order_id = :oid");
+                $updItem->execute([':price' => $price, ':total' => $lineTotal, ':iid' => $iid, ':oid' => $orderId]);
+            } else if (!empty($pid)) {
+                $updItem = $pdo->prepare("UPDATE order_items SET unit_price = :price, line_total = :total WHERE product_id = :pid AND order_id = :oid");
+                $updItem->execute([':price' => $price, ':total' => $lineTotal, ':pid' => $pid, ':oid' => $orderId]);
+            }
         }
-        $updOrder = $pdo->prepare("UPDATE orders SET status = 'quoted', total = :total, subtotal = :subtotal, quoted_at = NOW(), updated_at = NOW() WHERE id = :oid");
-        $updOrder->execute([
-            ':total'    => $total,
-            ':subtotal' => $total,
-            ':oid'      => $orderId,
-        ]);
+        $targetStatus = $isDraft ? null : 'quoted';
+        if ($isDraft) {
+            $updOrder = $pdo->prepare("UPDATE orders SET total = :total, subtotal = :subtotal, updated_at = NOW() WHERE id = :oid");
+            $updOrder->execute([':total' => $total, ':subtotal' => $total, ':oid' => $orderId]);
+        } else {
+            $updOrder = $pdo->prepare("UPDATE orders SET status = 'quoted', total = :total, subtotal = :subtotal, quoted_at = NOW(), priced_at = NOW(), updated_at = NOW() WHERE id = :oid");
+            $updOrder->execute([':total' => $total, ':subtotal' => $total, ':oid' => $orderId]);
+        }
         $pdo->commit();
         json_response([
             'success' => true,
-            'message' => 'Chiffrage validé et enregistré avec succès. Commande confirmée.',
+            'message' => $isDraft ? 'Brouillon enregistré avec succès.' : 'Chiffrage validé et enregistré avec succès. Commande confirmée.',
             'total'   => $total,
-            'status'  => 'quoted',
+            'status'  => $targetStatus,
         ]);
     } catch (Exception $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();

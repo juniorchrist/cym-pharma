@@ -253,7 +253,7 @@ export const Admin: React.FC = () => {
     loadClientReminders();
     loadTemplates();
 
-    // Souscription Supabase Realtime pour actualiser instantanément les commandes dès qu'une commande arrive
+    // Souscription Supabase Realtime pour actualiser instantanément les commandes dès qu'une commande ou un article change
     let channel: any = null;
     if (isSupabaseConfigured() && supabase) {
       try {
@@ -266,13 +266,41 @@ export const Admin: React.FC = () => {
               loadOrders();
             }
           )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'order_items' },
+            () => {
+              loadOrders();
+            }
+          )
           .subscribe();
       } catch (rtErr) {
         console.warn('[Admin] Realtime subscription notice:', rtErr);
       }
     }
 
+    // Polling automatique régulier (toutes les 20 secondes) tant que l'onglet est actif
+    const pollInterval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadOrders();
+        loadUsers();
+      }
+    }, 20000);
+
+    // Actualisation immédiate au retour sur l'onglet ou reprise de focus
+    const handleAdminFocus = () => {
+      if (document.visibilityState === 'visible') {
+        loadOrders();
+        loadUsers();
+      }
+    };
+    document.addEventListener('visibilitychange', handleAdminFocus);
+    window.addEventListener('focus', handleAdminFocus);
+
     return () => {
+      clearInterval(pollInterval);
+      document.removeEventListener('visibilitychange', handleAdminFocus);
+      window.removeEventListener('focus', handleAdminFocus);
       if (channel && supabase) {
         supabase.removeChannel(channel);
       }
@@ -505,10 +533,16 @@ export const Admin: React.FC = () => {
     setPricingActionLoading(true);
 
     try {
-      const itemsPayload = Object.entries(pricingLinePrices).map(([productId, unit_price]) => ({
-        productId,
-        unit_price,
-      }));
+      const itemsPayload = Object.entries(pricingLinePrices).map(([productId, unit_price]) => {
+        const line = pricingSummary?.lines.find((l) => String(l.productId) === String(productId));
+        return {
+          itemId: line?.itemId,
+          productId,
+          unit_price,
+          reference: line?.reference,
+          quantity: line?.quantity,
+        };
+      });
 
       const res = await AdminApi.saveOrderPricing(pricingOrder.id, itemsPayload);
       if (res.success) {
@@ -534,16 +568,38 @@ export const Admin: React.FC = () => {
     setPricingActionLoading(true);
 
     try {
-      const itemsPayload = Object.entries(pricingLinePrices).map(([productId, unit_price]) => ({
-        productId,
-        unit_price,
-      }));
+      const itemsPayload = Object.entries(pricingLinePrices).map(([productId, unit_price]) => {
+        const line = pricingSummary?.lines.find((l) => String(l.productId) === String(productId));
+        return {
+          itemId: line?.itemId,
+          productId,
+          unit_price,
+          reference: line?.reference,
+          quantity: line?.quantity,
+        };
+      });
 
       const res = await AdminApi.validateOrderPricing(pricingOrder.id, itemsPayload);
       if (res.success) {
         const orderRef = pricingOrder.orderNumber || pricingOrder.id;
         showToast(`Commande ${orderRef} chiffrée et confirmée ! Facture générée : ${formatCurrency(computedPricingTotal)}`, 'success');
         setIsPricingModalOpen(false);
+
+        // Mise à jour immédiate optimiste de la commande dans la liste pour éviter tout décalage d'affichage
+        setOrdersList((prev) =>
+          prev.map((o) =>
+            o.id === pricingOrder.id || o.orderNumber === pricingOrder.orderNumber
+              ? {
+                  ...o,
+                  status: 'quoted',
+                  total: computedPricingTotal,
+                  subtotal: computedPricingTotal,
+                  priced_at: new Date().toISOString(),
+                }
+              : o
+          )
+        );
+
         loadOrders();
       } else {
         showToast(res.message || 'Impossible de valider et transmettre la facture', 'error');
