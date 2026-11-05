@@ -1,24 +1,20 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Printer, Download, CheckCircle, ShieldCheck, FileText, Layers } from 'lucide-react';
-import { storage } from '../utils/storage';
+import { ArrowLeft, Printer, Download, CheckCircle, ShieldCheck, FileText, Layers, Clock, AlertTriangle } from 'lucide-react';
 import { Orders } from '../services/api';
 import { Order, OrderItem } from '../types';
+import { COMPANY } from '../config/company';
+import { isPendingQuote } from '../domain/orderStatus';
 
 export const Facture: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const orderId = searchParams.get('id') || searchParams.get('order_id');
 
-  const [order, setOrder] = useState<Order | null>(() => {
-    const cached = storage.getBLCurrentOrder();
-    if (cached && (cached.id === orderId || cached.orderNumber === orderId)) {
-      return cached;
-    }
-    return null;
-  });
-
-  const [loading, setLoading] = useState(false);
+  // Toujours initialiser à null pour forcer le chargement de l'état serveur frais
+  // Évite l'affichage d'un instantané périmé (sans prix) conservé dans sessionStorage
+  const [order, setOrder] = useState<Order | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (orderId) {
@@ -40,6 +36,8 @@ export const Facture: React.FC = () => {
           setLoading(false);
         }
       })();
+    } else {
+      setLoading(false);
     }
   }, [orderId]);
 
@@ -69,8 +67,14 @@ export const Facture: React.FC = () => {
     order?.establishment_name ||
     (order?.first_name && order?.last_name ? `${order.first_name} ${order.last_name}` : '');
 
-  const fullAddress =
-    [order?.shipping_address, order?.shipping_city].filter(Boolean).join(', ') || '';
+  const fullAddress = useMemo(() => {
+    const rawParts = [order?.shipping_address, order?.shipping_city].filter(Boolean) as string[];
+    if (rawParts.length === 0) return COMPANY.city;
+    if (rawParts.length === 2 && rawParts[0].toLowerCase().includes(rawParts[1].toLowerCase())) {
+      return rawParts[0];
+    }
+    return rawParts.join(', ');
+  }, [order?.shipping_address, order?.shipping_city]);
 
   const computedTotal = useMemo(() => {
     if (typeof order?.total === 'number' && order.total > 0) {
@@ -119,6 +123,48 @@ export const Facture: React.FC = () => {
           >
             Retour au tableau de bord
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Si la commande n'a pas encore été chiffrée par l'administrateur,
+  // la facture définitive avec montants n'est pas disponible (règle anti 0 FCFA).
+  if (isPendingQuote(order.status) || (!order.total && computedTotal === 0)) {
+    return (
+      <div className="bg-[#f1f5f9] min-h-screen flex flex-col items-center justify-center py-6 px-4 text-slate-700">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-center max-w-md space-y-4">
+          <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto border border-amber-200">
+            <Clock className="w-6 h-6" />
+          </div>
+          <div>
+            <h2 className="text-base font-bold text-slate-900">Facture en attente de chiffrage</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              La commande <strong className="font-mono text-slate-700">{orderNumber}</strong> est en cours de traitement par notre équipe commerciale.
+            </p>
+            <p className="text-xs text-slate-500 mt-2">
+              La facture officielle avec le détail des prix et le net à payer sera générée automatiquement dès validation du chiffrage.
+            </p>
+          </div>
+          <div className="pt-2 flex flex-col sm:flex-row gap-2 justify-center">
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard#commandes')}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition"
+            >
+              Voir mes commandes
+            </button>
+            <button
+              type="button"
+              disabled
+              aria-disabled="true"
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 text-slate-400 text-xs font-semibold bg-slate-50 cursor-not-allowed opacity-60"
+              title="Disponible après chiffrage"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Imprimer (Indisponible)</span>
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -180,13 +226,21 @@ export const Facture: React.FC = () => {
           {/* 1. EN-TÊTE DE FACTURE */}
           <div className="flex items-start justify-between pb-2.5 border-b-2 border-slate-900 shrink-0">
             <div className="flex items-center gap-3">
-              <img src="/LOGO.png" alt="CYM Pharma" className="h-11 w-auto object-contain" />
+              <img
+                src="/LOGO.png"
+                alt={COMPANY.name}
+                className="h-[46px] w-auto max-w-[190px] object-contain object-left shrink-0"
+              />
               <div>
                 <p className="text-[10px] font-semibold text-[var(--primary)]">
-                  Dispositifs Médicaux &amp; Consommables Hospitaliers B2B
+                  {COMPANY.tagline || 'Dispositifs Médicaux & Consommables Hospitaliers B2B'}
                 </p>
                 <p className="text-[9px] text-slate-500 mt-0.5">
-                  Cocody Riviera 3, Abidjan • Côte d’Ivoire | N° CC : 2039482 B | RCCM : CI-ABJ-2023-B-14920
+                  {[
+                    COMPANY.address,
+                    COMPANY.taxId ? `N° CC : ${COMPANY.taxId}` : null,
+                    COMPANY.registrationNumber ? `RCCM : ${COMPANY.registrationNumber}` : null,
+                  ].filter(Boolean).join(' | ')}
                 </p>
               </div>
             </div>
@@ -396,7 +450,7 @@ export const Facture: React.FC = () => {
           >
             <div className="space-y-1.5">
               <p className={`text-slate-400 leading-tight ${isLongList ? 'text-[8px]' : 'text-[10px]'}`}>
-                * Dispositifs médicaux conformes Art. 355 CGI Côte d'Ivoire (exonération TVA consommables vitaux).
+                * Facture établie sur la base des prix chiffrés et validés par CYM Pharma.
               </p>
             </div>
 
@@ -408,14 +462,6 @@ export const Facture: React.FC = () => {
               <div className="flex justify-between">
                 <span>Total Brut HT :</span>
                 <span className="font-semibold text-slate-800">{computedTotal.toLocaleString('fr-FR')} FCFA</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Remise Partenaire B2B :</span>
-                <span>0 FCFA</span>
-              </div>
-              <div className="flex justify-between">
-                <span>TVA (0% Médical) :</span>
-                <span>0 FCFA</span>
               </div>
               <div className="pt-1.5 border-t border-slate-300 flex justify-between items-baseline">
                 <span className="font-extrabold text-slate-900 text-xs">NET À PAYER :</span>
@@ -435,27 +481,32 @@ export const Facture: React.FC = () => {
         >
           <div className="grid grid-cols-2 gap-4 items-end mb-2">
             <div className={`text-slate-500 ${isLongList ? 'text-[8.5px]' : 'text-[10px]'}`}>
-              <p className="font-bold text-slate-700">Garanties &amp; Conformité :</p>
-              <p>Articles conformes aux normes CE / ISO 13485.</p>
-              <p>Livraison sécurisée sous température contrôlée à Abidjan.</p>
+              <p className="font-bold text-slate-700">Conditions &amp; Livraison :</p>
+              <p>Livraison sur site client ou enlèvement selon accord commercial.</p>
+              <p>Règlement à réception de facture selon conditions convenues.</p>
             </div>
 
             <div className="text-right">
-              <p className="text-[10px] font-bold text-slate-700">Pour CYM Pharma</p>
+              <p className="text-[10px] font-bold text-slate-700">Pour {COMPANY.name}</p>
               <p className="text-[9px] text-slate-400">Direction Commerciale &amp; Logistique</p>
               <div className="mt-1 inline-block px-3 py-1 border border-dashed border-emerald-600 rounded bg-emerald-50/50">
                 <span className="text-[9px] font-extrabold uppercase text-emerald-800 tracking-wider block">
-                  CYM PHARMA CI
+                  {COMPANY.name.toUpperCase()}
                 </span>
                 <span className="text-[8px] text-emerald-700 block font-semibold">
-                  FACTURE CERTIFIÉE CONFORME
+                  DOCUMENT COMMERCIAL OFFICIEL
                 </span>
               </div>
             </div>
           </div>
 
           <p className="text-[8px] text-center text-slate-400">
-            CYM Pharma • Cocody Riviera 3, Abidjan • Tél : +225 07 09 55 40 20 • Email : commandes@cympharma.ci
+            {[
+              COMPANY.name,
+              COMPANY.address,
+              COMPANY.phone ? `Tél : ${COMPANY.phone}` : null,
+              COMPANY.email ? `Email : ${COMPANY.email}` : null,
+            ].filter(Boolean).join(' • ')}
           </p>
         </div>
       </main>

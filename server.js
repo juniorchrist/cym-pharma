@@ -85,6 +85,14 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
+// Middleware anti-cache pour toutes les réponses API (évite les snapshots périmés de commandes)
+app.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+});
+
 // Helper JSON
 function send(res, code, payload) {
   res.status(code).json(payload);
@@ -152,6 +160,34 @@ router.get('/health', async (_req, res) => {
     });
   } catch (err) {
     send(res, 503, { success: false, status: 'error', message: err.message });
+  }
+});
+
+// 1.bis. Synchronisation légère d'état (évite de transférer toute la base pour détecter une mise à jour)
+router.get('/sync/state', async (_req, res) => {
+  try {
+    const { data: latestOrder } = await db
+      .from('orders')
+      .select('updated_at, priced_at')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const { count: pendingCount } = await db
+      .from('orders')
+      .select('id', { count: 'exact', head: true })
+      .in('status', ['pending_quote', 'pending']);
+
+    send(res, 200, {
+      success: true,
+      data: {
+        server_time: new Date().toISOString(),
+        last_order_update: latestOrder?.updated_at || latestOrder?.priced_at || null,
+        pending_quotes_count: pendingCount || 0,
+      },
+    });
+  } catch (err) {
+    send(res, 500, { success: false, message: err.message });
   }
 });
 

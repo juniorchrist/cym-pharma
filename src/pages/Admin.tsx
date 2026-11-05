@@ -600,6 +600,23 @@ export const Admin: React.FC = () => {
           )
         );
 
+        // Diffusion inter-onglets instantanée pour rafraîchir le client et l'admin immédiatement
+        try {
+          if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+            const bc = new BroadcastChannel('cym_orders_channel');
+            bc.postMessage({
+              type: 'ORDER_QUOTED',
+              orderId: pricingOrder.id,
+              orderNumber: pricingOrder.orderNumber,
+              total: computedPricingTotal,
+              timestamp: Date.now(),
+            });
+            bc.close();
+          }
+        } catch {
+          // Fallback silencieux si non supporté
+        }
+
         loadOrders();
       } else {
         showToast(res.message || 'Impossible de valider et transmettre la facture', 'error');
@@ -1493,7 +1510,7 @@ export const Admin: React.FC = () => {
                               {ord.establishment_name}
                             </td>
                             <td className="py-3.5 text-slate-500">
-                              {ord.created_at ? ord.created_at.slice(0, 10) : ''}
+                              {ord.created_at ? new Date(ord.created_at).toLocaleDateString('fr-FR') : ''}
                             </td>
                             <td className="py-3.5 text-center font-bold text-slate-700">
                               {ord.item_count || ord.items?.length || 1}
@@ -1525,7 +1542,7 @@ export const Admin: React.FC = () => {
                                 }`}
                               >
                                 <Calculator className="w-3.5 h-3.5" />
-                                <span>{isPending ? 'Chiffrer' : 'Voir Chiffrage'}</span>
+                                <span>{isPending ? 'Chiffrer' : 'Voir'}</span>
                               </button>
                             </td>
                           </tr>
@@ -1540,6 +1557,7 @@ export const Admin: React.FC = () => {
                   {ordersList.slice(0, 5).map((ord) => {
                     const stInfo = getOrderStatus(ord.status);
                     const isPending = isPendingQuote(ord.status);
+                    const count = ord.item_count || ord.items?.length || 1;
                     return (
                       <div key={ord.id} className="p-4 rounded-2xl border border-slate-200 bg-white space-y-3 shadow-xs">
                         <div className="flex items-start justify-between gap-2">
@@ -1551,7 +1569,7 @@ export const Admin: React.FC = () => {
                               {ord.establishment_name}
                             </p>
                             <p className="text-[11px] text-slate-500 mt-0.5">
-                              {ord.created_at ? ord.created_at.slice(0, 10) : ''} • {ord.item_count || ord.items?.length || 1} article(s)
+                              {ord.created_at ? new Date(ord.created_at).toLocaleDateString('fr-FR') : ''} • {count} article{count > 1 ? 's' : ''}
                             </p>
                           </div>
                           <span className={`status-pill ${stInfo.pillClass} shrink-0`}>
@@ -1582,7 +1600,7 @@ export const Admin: React.FC = () => {
                           }`}
                         >
                           <Calculator className="w-4 h-4" />
-                          <span>{isPending ? 'Chiffrer la commande' : 'Ouvrir le chiffrage'}</span>
+                          <span>{isPending ? 'Chiffrer la commande' : 'Voir la commande'}</span>
                         </button>
                       </div>
                     );
@@ -1898,7 +1916,7 @@ export const Admin: React.FC = () => {
                               {o.order_number || o.orderNumber || o.id}
                             </td>
                             <td className="py-3.5 text-slate-500">
-                              {o.created_at ? o.created_at.substring(0, 10) : ''}
+                              {o.created_at ? new Date(o.created_at).toLocaleDateString('fr-FR') : ''}
                             </td>
                             <td className="py-3.5 font-bold text-slate-800 max-w-[160px] truncate">
                               {o.establishment_name}
@@ -1977,6 +1995,7 @@ export const Admin: React.FC = () => {
                   {filteredOrders.map((o) => {
                     const stInfo = getOrderStatus(o.status);
                     const isPending = isPendingQuote(o.status);
+                    const count = o.item_count || o.items?.length || 1;
                     return (
                       <div key={o.id} className="p-4 rounded-2xl border border-slate-200 bg-white space-y-3 shadow-xs">
                         <div className="flex items-start justify-between gap-2">
@@ -1988,7 +2007,7 @@ export const Admin: React.FC = () => {
                               {o.establishment_name}
                             </p>
                             <p className="text-[11px] text-slate-500 mt-0.5">
-                              {o.created_at ? o.created_at.slice(0, 10) : ''} • {o.shipping_city || 'Abidjan'} • {o.item_count || o.items?.length || 1} article(s)
+                              {o.created_at ? new Date(o.created_at).toLocaleDateString('fr-FR') : ''} • {o.shipping_city || 'Abidjan'} • {count} article{count > 1 ? 's' : ''}
                             </p>
                           </div>
                           <span className={`status-pill ${stInfo.pillClass} shrink-0`}>
@@ -2020,7 +2039,7 @@ export const Admin: React.FC = () => {
                             }`}
                           >
                             <Calculator className="w-4 h-4" />
-                            <span>{isPending ? 'Chiffrer la commande' : 'Ouvrir le chiffrage'}</span>
+                            <span>{isPending ? 'Chiffrer la commande' : 'Voir la commande'}</span>
                           </button>
                           {!isPending && (
                             <div className="grid grid-cols-2 gap-2">

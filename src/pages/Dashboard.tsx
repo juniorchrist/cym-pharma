@@ -183,6 +183,21 @@ export const Dashboard: React.FC = () => {
       }
     }
 
+    // Diffusion inter-onglets (BroadcastChannel) pour actualisation instantanée
+    let bc: BroadcastChannel | null = null;
+    try {
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        bc = new BroadcastChannel('cym_orders_channel');
+        bc.onmessage = (event) => {
+          if (event.data?.type === 'ORDER_QUOTED' || event.data?.type === 'ORDER_STATUS_CHANGED') {
+            fetchOrders(true);
+          }
+        };
+      }
+    } catch {
+      // Ignorer si BroadcastChannel n'est pas supporté
+    }
+
     // Rechargement au retour sur l'onglet
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
@@ -206,6 +221,11 @@ export const Dashboard: React.FC = () => {
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleVisibility);
       clearInterval(interval);
+      if (bc) {
+        try {
+          bc.close();
+        } catch {}
+      }
       if (channel && supabase) {
         supabase.removeChannel(channel);
       }
