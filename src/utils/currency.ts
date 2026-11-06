@@ -26,31 +26,55 @@ export function formatCurrency(amount: number | string | null | undefined): stri
 }
 
 /**
- * Affiche un montant en FCFA en distinguant :
- * - valeur absente (null/undefined/'') → `whenAbsent` (défaut '—')
- * - valeur invalide (NaN) → `whenAbsent`
- * - valeur nulle réelle (0) → `whenZero` (défaut '0 FCFA')
- * - valeur positive → formatée en FCFA
- *
- * Utilisez cette fonction partout où le montant peut être absent
- * (commande non chiffrée) pour ne jamais afficher "0 FCFA" par erreur.
+ * Affiche un montant en FCFA en distinguant rigoureusement :
+ * - valeur absente (null/undefined/'') → « À chiffrer » ou fallback configuré
+ * - commande non chiffrée (statut pending_quote) → « À chiffrer »
+ * - valeur invalide (NaN) → « Montant indisponible » avec erreur console
+ * - valeur réelle de 0 FCFA → « 0 FCFA »
+ * - montant chiffré positif → formaté avec séparateurs d'espaces (« 125 000 FCFA »)
  */
 export function formatMoney(
   amount: number | string | null | undefined,
-  options: { whenAbsent?: string; whenZero?: string } = {}
+  options: {
+    status?: string | null;
+    whenAbsent?: string;
+    whenZero?: string;
+    whenInvalid?: string;
+  } = {}
 ): string {
-  const { whenAbsent = '—', whenZero = '0 FCFA' } = options;
+  const {
+    status,
+    whenAbsent = 'À chiffrer',
+    whenZero = '0 FCFA',
+    whenInvalid = 'Montant indisponible',
+  } = options;
 
-  if (amount === null || amount === undefined || amount === '') return whenAbsent;
+  // Si le statut de commande indique explicitement une attente de chiffrage
+  if (status && (status === 'pending_quote' || status === 'pending' || status.includes('attente') || status.includes('chiffrer'))) {
+    return whenAbsent;
+  }
 
-  const num = typeof amount === 'string'
-    ? parseFloat(String(amount).replace(/\s/g, '').replace(',', '.'))
-    : amount;
+  if (amount === null || amount === undefined || amount === '') {
+    return whenAbsent;
+  }
 
-  if (isNaN(num)) return whenAbsent;
-  if (num === 0) return whenZero;
+  const num = typeof amount === 'number'
+    ? amount
+    : parseFloat(String(amount).replace(/\s/g, '').replace(',', '.'));
+
+  if (isNaN(num)) {
+    console.error('[formatMoney] Montant numérique invalide :', amount);
+    return whenInvalid;
+  }
+
+  if (num === 0) {
+    if (status && (status === 'pending_quote' || status === 'pending')) {
+      return whenAbsent;
+    }
+    return whenZero;
+  }
 
   const rounded = Math.round(num);
-  const formatted = rounded.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+  const formatted = rounded.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
   return `${formatted} FCFA`;
 }

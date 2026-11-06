@@ -5,6 +5,7 @@ import { Orders } from '../services/api';
 import { Order, OrderItem } from '../types';
 import { COMPANY } from '../config/company';
 import { isPendingQuote } from '../domain/orderStatus';
+import { mapOrder } from '../domain/orderMapper';
 
 export const Facture: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -23,11 +24,11 @@ export const Facture: React.FC = () => {
         try {
           const res = await Orders.get(orderId);
           if (res.success && res.data?.order) {
-            setOrder(res.data.order);
+            setOrder(mapOrder(res.data.order));
           } else {
             const phpRes = await Orders.showPhp(orderId);
             if (phpRes.order) {
-              setOrder(phpRes.order);
+              setOrder(mapOrder(phpRes.order));
             }
           }
         } catch (err) {
@@ -138,19 +139,19 @@ export const Facture: React.FC = () => {
             <Clock className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-base font-bold text-slate-900">Facture en attente de chiffrage</h2>
+            <h2 className="text-base font-bold text-slate-900">Facture disponible après chiffrage.</h2>
             <p className="text-xs text-slate-500 mt-1">
-              La commande <strong className="font-mono text-slate-700">{orderNumber}</strong> est en cours de traitement par notre équipe commerciale.
+              La commande <strong className="font-mono text-slate-700">{orderNumber}</strong> est en attente de chiffrage par notre équipe commerciale.
             </p>
             <p className="text-xs text-slate-500 mt-2">
-              La facture officielle avec le détail des prix et le net à payer sera générée automatiquement dès validation du chiffrage.
+              Le document officiel avec les prix unitaires et le net à payer sera accessible dès confirmation des tarifs par l'administrateur.
             </p>
           </div>
           <div className="pt-2 flex flex-col sm:flex-row gap-2 justify-center">
             <button
               type="button"
               onClick={() => navigate('/dashboard#commandes')}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition"
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition cursor-pointer"
             >
               Voir mes commandes
             </button>
@@ -159,10 +160,10 @@ export const Facture: React.FC = () => {
               disabled
               aria-disabled="true"
               className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 text-slate-400 text-xs font-semibold bg-slate-50 cursor-not-allowed opacity-60"
-              title="Disponible après chiffrage"
+              title="Facture disponible après chiffrage."
             >
               <Printer className="w-3.5 h-3.5" />
-              <span>Imprimer (Indisponible)</span>
+              <span>Imprimer (Désactivé)</span>
             </button>
           </div>
         </div>

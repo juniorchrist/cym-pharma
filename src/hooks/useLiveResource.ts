@@ -48,10 +48,13 @@ export function useLiveResource<T>(
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const isMountedRef = useRef<boolean>(true);
+  const inFlightRef = useRef<boolean>(false);
+  const backoffDelayRef = useRef<number>(intervalMs);
 
   const executeFetch = useCallback(
     async (silent: boolean = false) => {
       if (!enabled) return;
+      if (inFlightRef.current) return; // Prévention des requêtes identiques simultanées
 
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -59,6 +62,7 @@ export function useLiveResource<T>(
 
       const controller = new AbortController();
       abortControllerRef.current = controller;
+      inFlightRef.current = true;
 
       if (!silent) setLoading(true);
 
@@ -68,18 +72,22 @@ export function useLiveResource<T>(
           setData(result);
           setError(null);
           setLastUpdated(new Date());
+          backoffDelayRef.current = intervalMs; // Réinitialiser le recul en cas de succès
         }
       } catch (err: any) {
         if (isMountedRef.current && !controller.signal.aborted) {
           setError(err instanceof Error ? err : new Error(String(err)));
+          // Délai progressif avant réessai (exponential backoff jusqu'à 60s)
+          backoffDelayRef.current = Math.min(backoffDelayRef.current * 1.5, 60000);
         }
       } finally {
+        inFlightRef.current = false;
         if (isMountedRef.current && !controller.signal.aborted && !silent) {
           setLoading(false);
         }
       }
     },
-    [key, enabled, fetcher]
+    [key, enabled, fetcher, intervalMs]
   );
 
   useEffect(() => {
@@ -100,7 +108,7 @@ export function useLiveResource<T>(
       if (document.visibilityState === 'visible') {
         executeFetch(true);
       }
-    }, intervalMs);
+    }, backoffDelayRef.current);
 
     // Reprise immédiate au focus ou réaffichage de l'onglet
     const handleVisibilityChange = () => {
@@ -117,7 +125,7 @@ export function useLiveResource<T>(
     window.addEventListener('focus', handleVisibilityChange);
     window.addEventListener('online', handleOnline);
 
-    // Écoute BroadcastChannel pour synchronisation inter-onglets instantanée
+    // 1. Écoute BroadcastChannel pour synchronisation inter-onglets instantanée
     let bc: BroadcastChannel | null = null;
     try {
       if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
@@ -132,12 +140,26 @@ export function useLiveResource<T>(
       // Ignorer si BroadcastChannel n'est pas disponible
     }
 
+    // 2. Repli de secours via l'événement storage pour les navigateurs restreints
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === 'cym_cross_tab_sync' && event.newValue) {
+        try {
+          const payload = JSON.parse(event.newValue);
+          if (!eventType || payload.type === eventType) {
+            executeFetch(true);
+          }
+        } catch {}
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
     return () => {
       isMountedRef.current = false;
       clearInterval(timer);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleVisibilityChange);
       window.removeEventListener('online', handleOnline);
+      window.removeEventListener('storage', handleStorage);
       if (bc) {
         try {
           bc.close();

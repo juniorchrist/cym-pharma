@@ -26,8 +26,9 @@ import { useToast } from '../context/ToastContext';
 import { Users, Orders } from '../services/api';
 import { supabase, isSupabaseConfigured } from '../services/supabase';
 import { storage } from '../utils/storage';
-import { formatCurrency } from '../utils/currency';
+import { formatCurrency, formatMoney } from '../utils/currency';
 import { normalizeOrderStatus, getOrderStatus, isPendingQuote, isQuoted } from '../domain/orderStatus';
+import { mapOrder } from '../domain/orderMapper';
 import { ALL_PRODUCTS } from '../data/catalog';
 import { Order } from '../types';
 
@@ -124,7 +125,7 @@ export const Dashboard: React.FC = () => {
         const res = await Orders.list();
         if (isMounted) {
           if (res.success && Array.isArray(res.data?.orders)) {
-            const fetched = res.data.orders;
+            const fetched = res.data.orders.map(mapOrder);
 
             // Notification détection si une commande vient d'être chiffrée
             if (prevOrdersMap.size > 0) {
@@ -132,7 +133,7 @@ export const Dashboard: React.FC = () => {
                 const oid = String(ord.orderNumber || ord.id);
                 const prevStatus = prevOrdersMap.get(oid);
                 if (prevStatus && isPendingQuote(prevStatus) && isQuoted(ord.status) && (ord.total || 0) > 0) {
-                  showToast(`Votre commande ${oid} a été chiffrée et confirmée ! Montant : ${formatCurrency(ord.total)}`, 'success');
+                  showToast(`Votre commande ${oid} a été chiffrée et confirmée ! Montant : ${formatMoney(ord.total)}`, 'success');
                 }
               }
             }
@@ -903,14 +904,21 @@ export const Dashboard: React.FC = () => {
                               })}
                             </td>
                             <td className="py-3.5 text-slate-600">
-                              {ord.item_count || ord.items?.length || 1} article(s)
+                              {(() => {
+                                const count = ord.item_count || ord.items?.length || 1;
+                                return `${count} article${count > 1 ? 's' : ''}`;
+                              })()}
                             </td>
                             <td className="py-3.5 font-semibold text-slate-900">
-                              {ord.total ? formatCurrency(ord.total) : <span className="text-slate-400 font-normal italic">En chiffrage</span>}
+                              {(() => {
+                                const isPriced = Boolean(ord.total && ord.total > 0 && !isPendingQuote(ord.status));
+                                return isPriced ? formatMoney(ord.total) : <span className="text-slate-400 font-normal italic">En chiffrage</span>;
+                              })()}
                             </td>
                             <td className="py-3.5">
                               {(() => {
-                                const st = getOrderStatus(ord.status);
+                                const isPriced = Boolean(ord.total && ord.total > 0 && !isPendingQuote(ord.status));
+                                const st = getOrderStatus(isPriced ? ord.status : 'pending_quote');
                                 return (
                                   <span className={`status-pill ${st.pillClass}`}>
                                     {st.clientLabel}
@@ -919,14 +927,26 @@ export const Dashboard: React.FC = () => {
                               })()}
                             </td>
                             <td className="py-3.5 text-right space-x-2">
-                              <Link
-                                to={`/facture?id=${ord.orderNumber || ord.id}`}
-                                target="_blank"
-                                className="font-semibold text-[var(--primary)] hover:underline inline-flex items-center gap-1"
-                              >
-                                <FileText className="w-3 h-3" />
-                                <span>Facture A4</span>
-                              </Link>
+                              {(() => {
+                                const isPriced = Boolean(ord.total && ord.total > 0 && !isPendingQuote(ord.status));
+                                if (!isPriced) {
+                                  return (
+                                    <span className="text-slate-400 text-xs italic">
+                                      Facture indisponible
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <Link
+                                    to={`/facture?id=${ord.orderNumber || ord.id}`}
+                                    target="_blank"
+                                    className="font-semibold text-[var(--primary)] hover:underline inline-flex items-center gap-1"
+                                  >
+                                    <FileText className="w-3 h-3" />
+                                    <span>Facture A4</span>
+                                  </Link>
+                                );
+                              })()}
                               <button
                                 type="button"
                                 onClick={() => handleReorder(String(ord.orderNumber || ord.id))}
@@ -997,13 +1017,22 @@ export const Dashboard: React.FC = () => {
                                 year: 'numeric',
                               })}
                             </td>
-                            <td className="py-4 text-slate-600">{ord.item_count || ord.items?.length || 1} article(s)</td>
+                            <td className="py-4 text-slate-600">
+                              {(() => {
+                                const count = ord.item_count || ord.items?.length || 1;
+                                return `${count} article${count > 1 ? 's' : ''}`;
+                              })()}
+                            </td>
                             <td className="py-4 font-semibold text-slate-900">
-                              {ord.total ? formatCurrency(ord.total) : <span className="text-slate-400 font-normal italic">En chiffrage</span>}
+                              {(() => {
+                                const isPriced = Boolean(ord.total && ord.total > 0 && !isPendingQuote(ord.status));
+                                return isPriced ? formatMoney(ord.total) : <span className="text-slate-400 font-normal italic">En chiffrage</span>;
+                              })()}
                             </td>
                             <td className="py-4">
                               {(() => {
-                                const st = getOrderStatus(ord.status);
+                                const isPriced = Boolean(ord.total && ord.total > 0 && !isPendingQuote(ord.status));
+                                const st = getOrderStatus(isPriced ? ord.status : 'pending_quote');
                                 return (
                                   <span className={`status-pill ${st.pillClass}`}>
                                     {st.clientLabel}
@@ -1012,18 +1041,24 @@ export const Dashboard: React.FC = () => {
                               })()}
                             </td>
                             <td className="py-4 text-right">
-                              {ord.status === 'Facture disponible' || (Number(ord.total) || 0) > 0 || ord.invoice_number ? (
-                                <Link
-                                  to={`/facture?id=${ord.orderNumber || ord.id}`}
-                                  target="_blank"
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition"
-                                >
-                                  <FileText className="w-3.5 h-3.5" />
-                                  <span>{ord.invoice_number || `FAC-${String(ord.orderNumber || ord.id).replace('CMD-', '')}`}</span>
-                                </Link>
-                              ) : (
-                                <span className="text-slate-400 text-xs italic">En attente de chiffrage</span>
-                              )}
+                              {(() => {
+                                const isPriced = Boolean(ord.total && ord.total > 0 && !isPendingQuote(ord.status));
+                                if (isPriced) {
+                                  return (
+                                    <Link
+                                      to={`/facture?id=${ord.orderNumber || ord.id}`}
+                                      target="_blank"
+                                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition"
+                                    >
+                                      <FileText className="w-3.5 h-3.5" />
+                                      <span>{ord.invoice_number || `FAC-${String(ord.orderNumber || ord.id).replace('CMD-', '')}`}</span>
+                                    </Link>
+                                  );
+                                }
+                                return (
+                                  <span className="text-slate-400 text-xs italic">Facture disponible après chiffrage</span>
+                                );
+                              })()}
                             </td>
                           </tr>
                         ))}

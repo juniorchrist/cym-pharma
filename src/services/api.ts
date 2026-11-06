@@ -63,6 +63,7 @@ async function request<T = unknown>(
     const response = await fetch(url, {
       ...options,
       headers,
+      cache: 'no-store',
     });
 
     if (response.status === 401 && !isPublicRoute) {
@@ -1495,16 +1496,34 @@ export const Admin = {
     orderId: string | number,
     items: { itemId?: number | string; productId: string | number; unit_price: number; reference?: string; quantity?: number }[]
   ): Promise<ApiResponse<{ order: Order }>> {
+    // 1. Appel prioritaire vers le serveur backend Render (service_role, contourne RLS en toute sécurité)
+    try {
+      const httpRes = await request<{ order: Order }>(`/admin/orders/${orderId}/quote`, {
+        method: 'POST',
+        body: JSON.stringify({ items }),
+      });
+
+      if (httpRes.success && httpRes.data?.order) {
+        return httpRes;
+      }
+      if (!httpRes.success && httpRes.message && !httpRes.message.includes('fetch')) {
+        // Erreur fonctionnelle explicite du serveur (ex: 422 prix manquant)
+        return httpRes;
+      }
+    } catch (httpErr) {
+      console.warn('[CYM] Échec appel HTTP quote, tentative repli Supabase:', httpErr);
+    }
+
+    // 2. Repli direct Supabase si le backend est temporairement inaccessible
     if (isSupabaseConfigured() && supabase) {
       try {
-        // 1. Charger toutes les lignes actuelles de la commande pour un matching direct sans erreur de cast SQL
         const { data: itemRows, error: fetchErr } = await supabase
           .from('order_items')
           .select('*')
           .eq('order_id', String(orderId));
 
         if (fetchErr) {
-          console.warn('[CYM] Erreur lecture order_items dans validateOrderPricing:', fetchErr);
+          return { success: false, message: `Impossible de lire les articles: ${fetchErr.message}` };
         }
 
         const existingList = itemRows || [];
@@ -1513,7 +1532,6 @@ export const Admin = {
         for (const item of items) {
           const unitPrice = Number(item.unit_price) || 0;
 
-          // Recherche multi-critères fiable sans risque d'erreur de cast PostgreSQL sur id/bigint
           let matchedRow = existingList.find((row: any) => {
             if (item.itemId && String(row.id) === String(item.itemId)) return true;
             if (item.productId && row.product_id && String(row.product_id) === String(item.productId)) return true;
@@ -1537,7 +1555,7 @@ export const Admin = {
               .eq('id', matchedRow.id);
 
             if (itemUpdateErr) {
-              console.warn(`[CYM] Erreur update order_items #${matchedRow.id}:`, itemUpdateErr);
+              return { success: false, message: `Échec mise à jour article #${matchedRow.id}: ${itemUpdateErr.message}` };
             }
           } else {
             const qty = Number(item.quantity) || 1;
@@ -1545,8 +1563,8 @@ export const Admin = {
           }
         }
 
-        if (computedTotal === 0 && items.length > 0) {
-          computedTotal = items.reduce((acc, it) => acc + (Number(it.unit_price) || 0) * (Number(it.quantity) || 1), 0);
+        if (computedTotal <= 0) {
+          return { success: false, message: 'Le montant total doit être supérieur à 0 FCFA pour valider.' };
         }
 
         const now = new Date().toISOString();
@@ -1567,10 +1585,9 @@ export const Admin = {
           .eq('id', String(orderId));
 
         if (orderUpdateErr) {
-          console.warn('[CYM] Erreur update orders Supabase:', orderUpdateErr);
+          return { success: false, message: `Échec confirmation commande Supabase: ${orderUpdateErr.message}` };
         }
 
-        // Enregistrer dans l'historique
         try {
           const userRes = await supabase.auth.getUser();
           await supabase.from('order_status_history').insert({
@@ -1579,9 +1596,7 @@ export const Admin = {
             note: `Chiffrage validé : ${computedTotal} FCFA`,
             changed_by: userRes.data?.user?.id || null,
           });
-        } catch (histErr) {
-          console.warn('[CYM] Note historique statut:', histErr);
-        }
+        } catch {}
 
         const { data: updatedOrder } = await supabase
           .from('orders')
@@ -1602,14 +1617,11 @@ export const Admin = {
           },
         };
       } catch (err: any) {
-        console.warn('[CYM] Supabase validateOrderPricing fallback to HTTP:', err);
+        return { success: false, message: err.message || 'Erreur lors du chiffrage' };
       }
     }
 
-    return request<{ order: Order }>(`/admin/orders/${orderId}/validate-pricing`, {
-      method: 'POST',
-      body: JSON.stringify({ items }),
-    });
+    return { success: false, message: 'Serveur de chiffrage indisponible.' };
   },
 
   async updateOrderStatus(id: string | number, status: string): Promise<ApiResponse<void>> {

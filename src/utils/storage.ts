@@ -3,7 +3,21 @@ import { CartItem, Order, User } from '../types';
 export const storage = {
   getAuthToken(): string | null {
     try {
-      return localStorage.getItem('cym_auth_token');
+      const token = localStorage.getItem('cym_auth_token');
+      if (token) return token;
+
+      // Recherche de secours dans les sessions Supabase Auth
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed?.access_token) return parsed.access_token;
+          }
+        }
+      }
+      return null;
     } catch {
       return null;
     }

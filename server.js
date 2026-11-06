@@ -655,6 +655,7 @@ router.get('/admin/orders/:id/pricing', async (req, res) => {
     const lineTotal = unitPrice * qty;
 
     return {
+      itemId: it.id,
       productId: it.product_id || it.id,
       name: it.name || 'Dispositif médical',
       reference: it.reference || '',
@@ -718,81 +719,242 @@ router.post('/admin/orders/:id/save-pricing', async (req, res) => {
   send(res, 200, { success: true, data: { order } });
 });
 
-router.post('/admin/orders/:id/quote', async (req, res) => {
+// ─── Handler unifié et atomique de validation du Chiffrage ────────────────────
+async function handleOrderQuote(req, res) {
   const adminId = await requireAdmin(req, res);
   if (!adminId) return;
-  const { items } = req.body;
-  let total = 0;
-  const { data: existingItems } = await db.from('order_items').select('*').eq('order_id', req.params.id);
-  const rows = existingItems || [];
 
-  if (Array.isArray(items)) {
-    for (const it of items) {
-      const uPrice = Number(it.unit_price) || 0;
-      let matched = rows.find(r =>
-        (it.itemId && String(r.id) === String(it.itemId)) ||
-        (it.productId && r.product_id && String(r.product_id) === String(it.productId)) ||
-        (it.productId && !isNaN(Number(it.productId)) && Number(r.id) === Number(it.productId)) ||
-        (it.reference && r.reference === it.reference)
-      );
-      if (!matched && rows.length === 1 && items.length === 1) matched = rows[0];
-      const qty = matched ? (Number(matched.quantity) || 1) : (Number(it.quantity) || 1);
-      const lineTotal = uPrice * qty;
-      total += lineTotal;
-      if (matched) {
-        await db.from('order_items').update({ unit_price: uPrice, line_total: lineTotal }).eq('id', matched.id);
-      }
+  const orderId = String(req.params.id);
+
+  // 1. Vérification d'existence de la commande
+  const { data: order, error: orderErr } = await db
+    .from('orders')
+    .select('*')
+    .eq('id', orderId)
+    .maybeSingle();
+
+  if (orderErr || !order) {
+    send(res, 404, { success: false, message: 'Commande introuvable.' });
+    return;
+  }
+
+  // 2. Vérification des lignes existantes associées
+  const { data: existingItems, error: itemsErr } = await db
+    .from('order_items')
+    .select('*')
+    .eq('order_id', orderId);
+
+  if (itemsErr || !existingItems || existingItems.length === 0) {
+    send(res, 404, { success: false, message: 'Aucun article trouvé pour cette commande.' });
+    return;
+  }
+
+  // 3. Validation de la charge utile (payload)
+  const submittedItems = Array.isArray(req.body.items) ? req.body.items : [];
+  if (submittedItems.length === 0) {
+    send(res, 422, { success: false, message: 'Au moins un article doit être chiffré.' });
+    return;
+  }
+
+  const updates = [];
+  for (const it of submittedItems) {
+    const rawPrice = it.unitPrice ?? it.unit_price;
+
+    if (rawPrice === null || rawPrice === undefined || String(rawPrice).trim() === '') {
+      send(res, 422, { success: false, message: 'Tous les prix unitaires doivent être renseignés.' });
+      return;
+    }
+
+    const numPrice = typeof rawPrice === 'number'
+      ? rawPrice
+      : parseFloat(String(rawPrice).replace(/\s/g, '').replace(',', '.'));
+
+    if (isNaN(numPrice) || numPrice < 0) {
+      send(res, 422, {
+        success: false,
+        message: `Le prix unitaire doit être un nombre positif (reçu: ${rawPrice}).`,
+      });
+      return;
+    }
+
+    if (!Number.isInteger(numPrice)) {
+      send(res, 422, {
+        success: false,
+        message: `Le prix unitaire doit être un entier FCFA sans centimes (reçu: ${rawPrice}).`,
+      });
+      return;
+    }
+
+    const targetItemId = it.orderItemId ?? it.itemId ?? it.id;
+    const targetProductId = it.productId ?? it.product_id;
+
+    let matched = existingItems.find(r =>
+      (targetItemId && String(r.id) === String(targetItemId)) ||
+      (targetProductId && r.product_id && String(r.product_id) === String(targetProductId)) ||
+      (targetProductId && !isNaN(Number(targetProductId)) && Number(r.id) === Number(targetProductId)) ||
+      (it.reference && r.reference && r.reference === it.reference)
+    );
+
+    if (!matched && existingItems.length === 1 && submittedItems.length === 1) {
+      matched = existingItems[0];
+    }
+
+    if (!matched) {
+      send(res, 422, {
+        success: false,
+        message: `L'article soumis (id: ${targetItemId || targetProductId}) n'appartient pas à cette commande.`,
+      });
+      return;
+    }
+
+    const qty = Number(matched.quantity) || 1;
+    updates.push({
+      id: matched.id,
+      unit_price: numPrice,
+      line_total: numPrice * qty,
+    });
+  }
+
+  // S'assurer que toutes les lignes de la commande possèdent un prix valide > 0
+  const updatedItemIds = new Set(updates.map(u => String(u.id)));
+  const unpricedItem = existingItems.find(
+    r => !updatedItemIds.has(String(r.id)) && (!r.unit_price || Number(r.unit_price) <= 0)
+  );
+
+  if (unpricedItem) {
+    send(res, 422, {
+      success: false,
+      message: `Tous les articles de la commande doivent être chiffrés pour valider la confirmation.`,
+    });
+    return;
+  }
+
+  // 4. Enregistrement atomique de chaque ligne
+  for (const up of updates) {
+    const { error: updErr } = await db
+      .from('order_items')
+      .update({ unit_price: up.unit_price, line_total: up.line_total })
+      .eq('id', up.id);
+
+    if (updErr) {
+      send(res, 500, {
+        success: false,
+        message: `Échec d'enregistrement de l'article #${up.id}: ${updErr.message}`,
+      });
+      return;
     }
   }
-  const now = new Date().toISOString();
-  const invoiceNum = `FAC-${String(req.params.id).replace('CMD-', '')}`;
-  await db.from('orders').update({ status: 'quoted', total: total, subtotal: total, invoice_number: invoiceNum, invoice_date: now, priced_at: now, quoted_at: now, updated_at: now }).eq('id', req.params.id);
-  await db.from('order_status_history').insert({
-    order_id: req.params.id,
-    status: 'quoted',
-    note: `Chiffrage validé : ${total} FCFA`,
-    changed_by: adminId,
-  });
-  const { data: order } = await db.from('orders').select('*, items:order_items(*)').eq('id', req.params.id).maybeSingle();
-  send(res, 200, { success: true, data: { order } });
-});
 
-router.post('/admin/orders/:id/validate-pricing', async (req, res) => {
-  const adminId = await requireAdmin(req, res);
-  if (!adminId) return;
-  const { items } = req.body;
-  let total = 0;
-  const { data: existingItems } = await db.from('order_items').select('*').eq('order_id', req.params.id);
-  const rows = existingItems || [];
+  // 5. Relecture des lignes depuis la base de données pour garantir le total exact
+  const { data: freshItems, error: freshErr } = await db
+    .from('order_items')
+    .select('*')
+    .eq('order_id', orderId);
 
-  if (Array.isArray(items)) {
-    for (const it of items) {
-      const uPrice = Number(it.unit_price) || 0;
-      let matched = rows.find(r =>
-        (it.itemId && String(r.id) === String(it.itemId)) ||
-        (it.productId && r.product_id && String(r.product_id) === String(it.productId)) ||
-        (it.productId && !isNaN(Number(it.productId)) && Number(r.id) === Number(it.productId)) ||
-        (it.reference && r.reference === it.reference)
-      );
-      if (!matched && rows.length === 1 && items.length === 1) matched = rows[0];
-      const qty = matched ? (Number(matched.quantity) || 1) : (Number(it.quantity) || 1);
-      const lineTotal = uPrice * qty;
-      total += lineTotal;
-      if (matched) {
-        await db.from('order_items').update({ unit_price: uPrice, line_total: lineTotal }).eq('id', matched.id);
-      }
-    }
+  if (freshErr || !freshItems) {
+    send(res, 500, { success: false, message: 'Erreur lors de la relecture des articles.' });
+    return;
   }
+
+  const calculatedTotal = freshItems.reduce(
+    (sum, it) => sum + (Number(it.line_total) || (Number(it.unit_price || 0) * (Number(it.quantity || 1)))),
+    0
+  );
+
+  if (calculatedTotal <= 0) {
+    send(res, 422, {
+      success: false,
+      message: 'Le montant total chiffré doit être strictement supérieur à 0 FCFA.',
+    });
+    return;
+  }
+
+  // 6. Mise à jour de la commande et transition officielle vers quoted (Confirmée)
   const now = new Date().toISOString();
-  const invoiceNum = `FAC-${String(req.params.id).replace('CMD-', '')}`;
-  await db.from('orders').update({ status: 'quoted', total: total, subtotal: total, invoice_number: invoiceNum, invoice_date: now, priced_at: now, quoted_at: now, updated_at: now }).eq('id', req.params.id);
-  await db.from('order_status_history').insert({
-    order_id: req.params.id,
-    status: 'quoted',
-    note: `Chiffrage validé : ${total} FCFA`,
-    changed_by: adminId,
+  const orderNum = order.order_number || order.id;
+  const invoiceNum = `FAC-${String(orderNum).replace('CMD-', '')}`;
+
+  const { error: orderUpdErr } = await db
+    .from('orders')
+    .update({
+      status: 'quoted',
+      total: calculatedTotal,
+      subtotal: calculatedTotal,
+      subtotal_ht: calculatedTotal,
+      total_amount: calculatedTotal,
+      priced_at: now,
+      quoted_at: now,
+      quoted_by: adminId,
+      invoice_number: invoiceNum,
+      invoice_date: now,
+      updated_at: now,
+    })
+    .eq('id', orderId);
+
+  if (orderUpdErr) {
+    send(res, 500, { success: false, message: `Échec de mise à jour de la commande: ${orderUpdErr.message}` });
+    return;
+  }
+
+  // 7. Enregistrement de l'historique
+  try {
+    await db.from('order_status_history').insert({
+      order_id: orderId,
+      status: 'quoted',
+      note: `Chiffrage validé : ${calculatedTotal} FCFA`,
+      changed_by: adminId,
+    });
+  } catch (histErr) {
+    console.warn('[CYM SERVER] Note historique:', histErr);
+  }
+
+  // 8. Retour de la commande fraîche complète relue depuis Supabase
+  const { data: finalOrder } = await db
+    .from('orders')
+    .select('*, items:order_items(*)')
+    .eq('id', orderId)
+    .single();
+
+  send(res, 200, {
+    success: true,
+    message: 'Chiffrage validé et enregistré avec succès. Commande confirmée.',
+    data: {
+      order: finalOrder,
+      total: calculatedTotal,
+      invoice_number: invoiceNum,
+    },
   });
-  const { data: order } = await db.from('orders').select('*, items:order_items(*)').eq('id', req.params.id).maybeSingle();
+}
+
+router.post('/admin/orders/:id/quote', handleOrderQuote);
+router.post('/admin/orders/:id/validate-pricing', handleOrderQuote);
+
+// ─── Accès Facture avec contrôle 409 si non chiffrée ──────────────────────────
+router.get('/orders/:id/invoice', async (req, res) => {
+  const { data: order, error } = await db
+    .from('orders')
+    .select('*, items:order_items(*)')
+    .eq('id', req.params.id)
+    .maybeSingle();
+
+  if (error || !order) {
+    send(res, 404, { success: false, message: 'Facture introuvable.' });
+    return;
+  }
+
+  const isPending = order.status === 'pending_quote' || order.status === 'pending' || order.status === 'En attente de devis';
+  const hasNoAmount = !order.total || Number(order.total) <= 0;
+
+  if (isPending || hasNoAmount) {
+    send(res, 409, {
+      success: false,
+      code: 'QUOTE_PENDING',
+      message: 'Facture disponible après chiffrage.',
+      status: order.status,
+    });
+    return;
+  }
+
   send(res, 200, { success: true, data: { order } });
 });
 

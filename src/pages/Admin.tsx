@@ -171,6 +171,8 @@ export const Admin: React.FC = () => {
   const [pricingOrder, setPricingOrder] = useState<Order | null>(null);
   const [pricingSummary, setPricingSummary] = useState<OrderPricingSummary | null>(null);
   const [pricingLinePrices, setPricingLinePrices] = useState<Record<string, number>>({});
+  const [pricingRawInputs, setPricingRawInputs] = useState<Record<string, string>>({});
+  const [pricingErrors, setPricingErrors] = useState<Record<string, string>>({});
   const [pricingLoading, setPricingLoading] = useState(false);
   const [pricingActionLoading, setPricingActionLoading] = useState(false);
 
@@ -478,6 +480,8 @@ export const Admin: React.FC = () => {
     setPricingLoading(true);
     setIsPricingModalOpen(true);
     setPricingLinePrices({});
+    setPricingRawInputs({});
+    setPricingErrors({});
 
     try {
       const res = await AdminApi.getOrderPricing(order.id);
@@ -487,13 +491,18 @@ export const Admin: React.FC = () => {
 
         // Pre-fill prices map
         const initialPrices: Record<string, number> = {};
+        const initialRaw: Record<string, string> = {};
         summary.lines.forEach((line) => {
           const key = String(line.productId);
-          initialPrices[key] = (line.unit_price && line.unit_price > 0)
+          const price = (line.unit_price && line.unit_price > 0)
             ? line.unit_price
             : (line.ref_price || 0);
+          initialPrices[key] = price;
+          initialRaw[key] = price > 0 ? String(price) : '';
         });
         setPricingLinePrices(initialPrices);
+        setPricingRawInputs(initialRaw);
+        setPricingErrors({});
       }
     } catch (err) {
       console.warn('Error loading order pricing:', err);
@@ -503,12 +512,47 @@ export const Admin: React.FC = () => {
     }
   };
 
-  const handleLinePriceChange = (productId: string | number, newPriceStr: string) => {
-    const val = parseFloat(newPriceStr);
-    setPricingLinePrices((prev) => ({
-      ...prev,
-      [String(productId)]: isNaN(val) ? 0 : val,
-    }));
+  const handleLinePriceChange = (productId: string | number, rawStr: string) => {
+    const key = String(productId);
+    setPricingRawInputs((prev) => ({ ...prev, [key]: rawStr }));
+
+    const trimmed = rawStr.trim();
+    if (!trimmed) {
+      setPricingErrors((prev) => ({ ...prev, [key]: 'Prix requis' }));
+      setPricingLinePrices((prev) => ({ ...prev, [key]: 0 }));
+      return;
+    }
+
+    // Normalisation : accepter '12500' et '12 500' (espaces ou espaces insécables)
+    const cleanStr = trimmed.replace(/[\s\u00a0]/g, '').replace(',', '.');
+
+    // Refus des subdivisions monétaires (décimales) en FCFA
+    if (cleanStr.includes('.')) {
+      setPricingErrors((prev) => ({
+        ...prev,
+        [key]: 'Entier FCFA requis (pas de centimes)',
+      }));
+      setPricingLinePrices((prev) => ({ ...prev, [key]: 0 }));
+      return;
+    }
+
+    const val = Number(cleanStr);
+    if (isNaN(val) || val <= 0 || !Number.isInteger(val)) {
+      setPricingErrors((prev) => ({
+        ...prev,
+        [key]: 'Entier positif requis',
+      }));
+      setPricingLinePrices((prev) => ({ ...prev, [key]: 0 }));
+      return;
+    }
+
+    // Saisie valide
+    setPricingErrors((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setPricingLinePrices((prev) => ({ ...prev, [key]: val }));
   };
 
   // Dynamically computed total for the modal without manual additions
@@ -520,13 +564,18 @@ export const Admin: React.FC = () => {
     }, 0);
   }, [pricingSummary, pricingLinePrices]);
 
+  const hasPricingErrors = useMemo(() => {
+    return Object.keys(pricingErrors).length > 0;
+  }, [pricingErrors]);
+
   const hasAnyMissingPrice = useMemo(() => {
     if (!pricingSummary) return false;
+    if (hasPricingErrors) return true;
     return pricingSummary.lines.some((line) => {
       const p = pricingLinePrices[String(line.productId)];
       return p === undefined || p <= 0;
     });
-  }, [pricingSummary, pricingLinePrices]);
+  }, [pricingSummary, pricingLinePrices, hasPricingErrors]);
 
   const handleSaveDraftPricing = async () => {
     if (!pricingOrder) return;
@@ -1499,8 +1548,10 @@ export const Admin: React.FC = () => {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {ordersList.slice(0, 5).map((ord) => {
-                        const stInfo = getOrderStatus(ord.status);
-                        const isPending = isPendingQuote(ord.status);
+                        const isActuallyPriced = Boolean(ord.total && ord.total > 0 && !isPendingQuote(ord.status));
+                        const effectiveStatus = isActuallyPriced ? ord.status : 'pending_quote';
+                        const stInfo = getOrderStatus(effectiveStatus);
+                        const isPending = !isActuallyPriced;
                         return (
                           <tr key={ord.id} className="hover:bg-slate-50 transition">
                             <td className="py-3.5 font-bold font-mono text-[#155E95]">
@@ -1516,13 +1567,13 @@ export const Admin: React.FC = () => {
                               {ord.item_count || ord.items?.length || 1}
                             </td>
                             <td className="py-3.5 font-bold">
-                              {isPending || !ord.total ? (
+                              {isPending ? (
                                 <span className="text-amber-700 font-semibold italic bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                                   À chiffrer
                                 </span>
                               ) : (
                                 <span className="font-mono text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                                  {formatCurrency(ord.total)}
+                                  {formatMoney(ord.total)}
                                 </span>
                               )}
                             </td>
@@ -1555,8 +1606,10 @@ export const Admin: React.FC = () => {
                 {/* Vue Mobile (< 768px) : Liste de Cartes Complètes Sans Débordement */}
                 <div className="md:hidden space-y-3">
                   {ordersList.slice(0, 5).map((ord) => {
-                    const stInfo = getOrderStatus(ord.status);
-                    const isPending = isPendingQuote(ord.status);
+                    const isActuallyPriced = Boolean(ord.total && ord.total > 0 && !isPendingQuote(ord.status));
+                    const effectiveStatus = isActuallyPriced ? ord.status : 'pending_quote';
+                    const stInfo = getOrderStatus(effectiveStatus);
+                    const isPending = !isActuallyPriced;
                     const count = ord.item_count || ord.items?.length || 1;
                     return (
                       <div key={ord.id} className="p-4 rounded-2xl border border-slate-200 bg-white space-y-3 shadow-xs">
@@ -1579,13 +1632,13 @@ export const Admin: React.FC = () => {
 
                         <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs">
                           <span className="text-slate-500 font-medium">Montant :</span>
-                          {isPending || !ord.total ? (
+                          {isPending ? (
                             <span className="text-amber-700 font-bold bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
                               À chiffrer
                             </span>
                           ) : (
                             <span className="font-mono font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-                              {formatCurrency(ord.total)}
+                              {formatMoney(ord.total)}
                             </span>
                           )}
                         </div>
@@ -1908,8 +1961,10 @@ export const Admin: React.FC = () => {
                     </thead>
                     <tbody id="orders-table-body" className="divide-y divide-slate-100">
                       {filteredOrders.map((o) => {
-                        const stInfo = getOrderStatus(o.status);
-                        const isPending = isPendingQuote(o.status);
+                        const isActuallyPriced = Boolean(o.total && o.total > 0 && !isPendingQuote(o.status));
+                        const effectiveStatus = isActuallyPriced ? o.status : 'pending_quote';
+                        const stInfo = getOrderStatus(effectiveStatus);
+                        const isPending = !isActuallyPriced;
                         return (
                           <tr key={o.id} className="hover:bg-slate-50 transition">
                             <td className="py-3.5 font-mono font-bold text-[#155E95]">
@@ -1926,13 +1981,13 @@ export const Admin: React.FC = () => {
                               {o.item_count || o.items?.length || 1}
                             </td>
                             <td className="py-3.5 font-bold">
-                              {isPending || !o.total ? (
+                              {isPending ? (
                                 <span className="text-amber-700 font-semibold italic bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                                   À chiffrer
                                 </span>
                               ) : (
                                 <span className="font-mono text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                                  {formatCurrency(o.total)}
+                                  {formatMoney(o.total)}
                                 </span>
                               )}
                             </td>
@@ -1993,8 +2048,10 @@ export const Admin: React.FC = () => {
                 {/* Vue Mobile (< 768px) : Liste de Cartes Complètes Sans Débordement */}
                 <div className="md:hidden space-y-3">
                   {filteredOrders.map((o) => {
-                    const stInfo = getOrderStatus(o.status);
-                    const isPending = isPendingQuote(o.status);
+                    const isActuallyPriced = Boolean(o.total && o.total > 0 && !isPendingQuote(o.status));
+                    const effectiveStatus = isActuallyPriced ? o.status : 'pending_quote';
+                    const stInfo = getOrderStatus(effectiveStatus);
+                    const isPending = !isActuallyPriced;
                     const count = o.item_count || o.items?.length || 1;
                     return (
                       <div key={o.id} className="p-4 rounded-2xl border border-slate-200 bg-white space-y-3 shadow-xs">
@@ -2017,13 +2074,13 @@ export const Admin: React.FC = () => {
 
                         <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-xs">
                           <span className="text-slate-500 font-medium">Montant :</span>
-                          {isPending || !o.total ? (
+                          {isPending ? (
                             <span className="text-amber-700 font-bold bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
                               À chiffrer
                             </span>
                           ) : (
                             <span className="font-mono font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-                              {formatCurrency(o.total)}
+                              {formatMoney(o.total)}
                             </span>
                           )}
                         </div>
@@ -3024,27 +3081,33 @@ export const Admin: React.FC = () => {
 
                           {/* 3. Prix de référence administrable */}
                           <td className="py-3.5 px-4 text-right">
-                            <div className="inline-flex items-center justify-end gap-1.5">
-                              <input
-                                type="number"
-                                min="0"
-                                step="50"
-                                value={currentUnitPrice || ''}
-                                onChange={(e) => handleLinePriceChange(line.productId, e.target.value)}
-                                placeholder="0"
-                                className={`w-28 px-2.5 py-1 text-right font-mono font-bold text-xs rounded-lg border outline-none focus:ring-1 focus:ring-[var(--primary)] ${
-                                  isMissing
-                                    ? 'border-red-400 bg-red-50/80 text-red-700'
-                                    : 'border-slate-200 bg-white text-slate-900'
-                                }`}
-                              />
-                              <span className="text-slate-400 text-[11px] font-medium">FCFA</span>
+                            <div className="inline-flex flex-col items-end">
+                              <div className="inline-flex items-center justify-end gap-1.5">
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={pricingRawInputs[String(line.productId)] ?? (currentUnitPrice ? String(currentUnitPrice) : '')}
+                                  onChange={(e) => handleLinePriceChange(line.productId, e.target.value)}
+                                  placeholder="0"
+                                  className={`w-28 px-2.5 py-1 text-right font-mono font-bold text-xs rounded-lg border outline-none focus:ring-1 focus:ring-[var(--primary)] ${
+                                    pricingErrors[String(line.productId)] || isMissing
+                                      ? 'border-red-400 bg-red-50/80 text-red-700'
+                                      : 'border-slate-200 bg-white text-slate-900'
+                                  }`}
+                                />
+                                <span className="text-slate-400 text-[11px] font-medium">FCFA</span>
+                              </div>
+                              {pricingErrors[String(line.productId)] && (
+                                <span className="text-[10px] text-red-600 font-bold mt-1 text-right">
+                                  {pricingErrors[String(line.productId)]}
+                                </span>
+                              )}
+                              {line.ref_price && line.ref_price !== currentUnitPrice && !pricingErrors[String(line.productId)] && (
+                                <p className="text-[10px] text-slate-400 text-right mt-0.5">
+                                  Base catalogue : {formatCurrency(line.ref_price)}
+                                </p>
+                              )}
                             </div>
-                            {line.ref_price && line.ref_price !== currentUnitPrice && (
-                              <p className="text-[10px] text-slate-400 text-right mt-0.5">
-                                Base catalogue : {formatCurrency(line.ref_price)}
-                              </p>
-                            )}
                           </td>
 
                           {/* 4. Total ligne */}
@@ -3118,12 +3181,12 @@ export const Admin: React.FC = () => {
 
                 <button
                   type="button"
-                  disabled={pricingActionLoading || hasAnyMissingPrice}
+                  disabled={pricingActionLoading || hasAnyMissingPrice || hasPricingErrors}
                   onClick={handleValidatePricing}
                   className="px-5 py-2.5 rounded-xl text-xs font-extrabold flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white shadow-md transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
                   <Send className="w-4 h-4" />
-                  <span>Valider le chiffrage &amp; Confirmer la commande</span>
+                  <span>{pricingActionLoading ? 'Validation en cours...' : 'Valider le chiffrage & Confirmer la commande'}</span>
                 </button>
               </div>
             </div>
