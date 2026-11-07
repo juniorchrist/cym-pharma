@@ -67,6 +67,7 @@ export default function App() {
       <AuthProvider>
         <CartProvider>
           <BrowserRouter>
+            <GlobalPresenceHeartbeat />
             <Routes>
               {/* Public routes */}
               <Route path="/" element={<Accueil />} />

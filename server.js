@@ -1086,12 +1086,22 @@ router.get('/admin/users', async (req, res) => {
     // 2. Récupération de tous les profils et leurs rappels
     const { data: profiles, error: profError } = await db
       .from('profiles')
-      .select('*, client_reminders(id, status, opened_at, template_key)')
+      .select('*')
       .order('created_at', { ascending: false });
 
     if (profError) {
       send(res, 500, { success: false, message: profError.message });
       return;
+    }
+
+    let clientReminders = [];
+    try {
+      const { data: rems } = await db
+        .from('client_reminders')
+        .select('id, user_id, status, opened_at, template_key');
+      if (rems) clientReminders = rems;
+    } catch (remErr) {
+      console.warn('[CYM Admin] Notice client_reminders:', remErr?.message);
     }
 
     const profileMap = new Map((profiles || []).map((p) => [p.id, p]));
@@ -1144,7 +1154,7 @@ router.get('/admin/users', async (req, res) => {
       const lastSignInAt = authU?.last_sign_in_at || null;
       const createdAt = authU?.created_at || prof?.created_at || new Date().toISOString();
 
-      const reminders = Array.isArray(prof?.client_reminders) ? prof.client_reminders : [];
+      const reminders = clientReminders.filter((r) => String(r.user_id) === String(uid));
       const latestRem = [...reminders].sort(
         (a, b) => new Date(b.opened_at).getTime() - new Date(a.opened_at).getTime()
       )[0];

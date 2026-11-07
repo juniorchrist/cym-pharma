@@ -91,7 +91,7 @@ export const Admin: React.FC = () => {
   // Users & Relances state (Loaded live from backend engine)
   const [usersList, setUsersList] = useState<User[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
-  const [userFilterStatus, setUserFilterStatus] = useState<'all' | 'active' | 'inactive' | 'pending'>('all');
+  const [userFilterStatus, setUserFilterStatus] = useState<'all' | 'active' | 'inactive' | 'pending' | 'online'>('all');
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [userCurrentPage, setUserCurrentPage] = useState(1);
   const userItemsPerPage = 12;
@@ -712,6 +712,11 @@ export const Admin: React.FC = () => {
 
   // ── GESTION HONNÊTE DES RELANCES WHATSAPP & MODÈLES B2B ──
 
+  const isUserOnline = (u: User): boolean => {
+    const ls = (u as any).last_seen_at || (u as any).last_login_at;
+    return Boolean(ls && Date.now() - new Date(ls).getTime() < 90 * 1000);
+  };
+
   const isUserInactive = (u: User): boolean => {
     if (u.status === 'inactive') return true;
     if (u.status !== 'active') return false;
@@ -1147,9 +1152,11 @@ export const Admin: React.FC = () => {
       if (userFilterStatus === 'inactive') {
         matchesStatus = isUserInactive(u);
       } else if (userFilterStatus === 'active') {
-        matchesStatus = u.status === 'active' && !isUserInactive(u);
+        matchesStatus = Boolean(u.is_email_confirmed);
       } else if (userFilterStatus === 'pending') {
-        matchesStatus = u.status === 'pending';
+        matchesStatus = !u.is_email_confirmed;
+      } else if (userFilterStatus === 'online') {
+        matchesStatus = isUserOnline(u);
       }
 
       const q = (userSearchQuery || globalSearch).toLowerCase().trim();
@@ -2197,10 +2204,7 @@ export const Admin: React.FC = () => {
                   <p className="text-[11px] text-amber-700 font-medium mt-0.5">E-mail non vérifié</p>
                 </div>
                 {(() => {
-                  const onlineCount = usersList.filter((u) => {
-                    const ls = (u as any).last_seen_at || (u as any).last_login_at;
-                    return Boolean(ls && Date.now() - new Date(ls).getTime() < 90 * 1000);
-                  }).length;
+                  const onlineCount = usersList.filter(isUserOnline).length;
                   return (
                     <div className="admin-card p-4">
                       <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">En ligne actuellement</p>
@@ -2242,6 +2246,20 @@ export const Admin: React.FC = () => {
                         }`}
                       >
                         Tous ({usersList.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserFilterStatus('online');
+                          setUserCurrentPage(1);
+                        }}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
+                          userFilterStatus === 'online'
+                            ? 'bg-blue-600 text-white shadow-xs'
+                            : 'text-blue-700 hover:bg-blue-50'
+                        }`}
+                      >
+                        En ligne ({usersList.filter(isUserOnline).length})
                       </button>
                       <button
                         type="button"
@@ -2373,7 +2391,15 @@ export const Admin: React.FC = () => {
                             return (
                               <tr key={u.id} className="hover:bg-slate-50 transition">
                                 <td className="py-3">
-                                  <p className="font-bold text-slate-900">{clientFullName}</p>
+                                  <div className="flex items-center gap-1.5">
+                                    <p className="font-bold text-slate-900">{clientFullName}</p>
+                                    {isUserOnline(u) && (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                        En ligne
+                                      </span>
+                                    )}
+                                  </div>
                                   <p className="text-[11px] text-slate-500 font-mono">{u.email}</p>
                                   <div className="mt-1 flex items-center gap-1.5">
                                     {phoneCheck.isValid ? (
@@ -2579,23 +2605,39 @@ export const Admin: React.FC = () => {
                           >
                             <div className="flex items-start justify-between gap-2">
                               <div>
-                                <p className="font-bold text-slate-900 text-sm">
-                                  {u.first_name || ''} {u.last_name || ''}
-                                </p>
-                                <p className="text-xs font-semibold text-slate-700">
+                                <div className="flex items-center gap-1.5">
+                                  <p className="font-bold text-slate-900 text-sm">
+                                    {u.first_name || ''} {u.last_name || ''}
+                                  </p>
+                                  {isUserOnline(u) && (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                      En ligne
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] font-mono text-slate-500">{u.email}</p>
+                                <p className="text-xs font-semibold text-slate-700 mt-0.5">
                                   {u.establishment_name || 'Sans structure'}
                                 </p>
                                 <p className="text-[11px] text-slate-400">{u.commune || 'Abidjan'}</p>
                               </div>
 
-                              <div>
-                                {inactive ? (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                                    Inactif
+                              <div className="flex flex-col items-end gap-1">
+                                {u.is_email_confirmed ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                                    <span>Confirmé</span>
                                   </span>
                                 ) : (
-                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                    Actif
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                    <Clock className="w-2.5 h-2.5 text-amber-600" />
+                                    <span>Non confirmé</span>
+                                  </span>
+                                )}
+                                {inactive && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                    Inactif
                                   </span>
                                 )}
                               </div>
