@@ -917,8 +917,7 @@ export const Dashboard: React.FC = () => {
                             </td>
                             <td className="py-3.5">
                               {(() => {
-                                const isPriced = Boolean(ord.total && ord.total > 0 && !isPendingQuote(ord.status));
-                                const st = getOrderStatus(isPriced ? ord.status : 'pending_quote');
+                                const st = getOrderStatus(ord.status);
                                 return (
                                   <span className={`status-pill ${st.pillClass}`}>
                                     {st.clientLabel}
@@ -1031,8 +1030,7 @@ export const Dashboard: React.FC = () => {
                             </td>
                             <td className="py-4">
                               {(() => {
-                                const isPriced = Boolean(ord.total && ord.total > 0 && !isPendingQuote(ord.status));
-                                const st = getOrderStatus(isPriced ? ord.status : 'pending_quote');
+                                const st = getOrderStatus(ord.status);
                                 return (
                                   <span className={`status-pill ${st.pillClass}`}>
                                     {st.clientLabel}

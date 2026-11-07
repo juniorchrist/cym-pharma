@@ -1,122 +1,49 @@
--- =====================================================================
--- CYM PHARMA — Migration 004 (Multi-DB)
--- Correction des commandes marquées chiffrées sans montant
--- Date : 02/11/2026
--- =====================================================================
--- ⚠️  ATTENTION : Cette migration doit être exécutée MANUELLEMENT
--- après validation de la liste des commandes concernées.
--- 
--- NE PAS EXÉCUTER automatiquement en production sans accord.
--- =====================================================================
+-- =============================================================================
+-- CYM PHARMA — MIGRATION 004 : CORRECTION HISTORIQUE DES COMMANDES SANS PRIX
+-- & CONTRAINTE CHECK DE COHÉRENCE STRICTE
+-- =============================================================================
+-- Règle d'or : Toute commande postérieure à pending_quote (hors cancelled)
+-- doit obligatoirement posséder un total strictement supérieur à 0 FCFA.
+-- =============================================================================
 
--- ═════════════════════════════════════════════════════════════════════
--- ÉTAPE 1 : RAPPORT DES COMMANDES CONCERNÉES
--- ═════════════════════════════════════════════════════════════════════
-
--- MySQL
-/*
-SELECT 
-  id, 
-  order_number, 
-  status, 
-  COALESCE(total, 0) AS total,
-  COALESCE(total_amount, 0) AS total_amount,
-  priced_at,
-  quoted_at,
-  created_at,
-  updated_at
-FROM orders
-WHERE status IN ('quoted', 'Chiffrée', 'confirmed', 'Confirmée')
-  AND (total <= 0 OR total IS NULL OR total_amount <= 0 OR total_amount IS NULL)
-ORDER BY created_at DESC;
-*/
-
--- PostgreSQL
-/*
-SELECT 
-  id, 
-  order_number, 
-  status, 
-  COALESCE(total, 0) AS total,
-  COALESCE(total_amount, 0) AS total_amount,
-  priced_at,
-  quoted_at,
-  created_at,
-  updated_at
-FROM public.orders
-WHERE status IN ('quoted', 'Chiffrée', 'confirmed', 'Confirmée')
-  AND (total <= 0 OR total IS NULL OR total_amount <= 0 OR total_amount IS NULL)
-ORDER BY created_at DESC;
-*/
-
--- ═════════════════════════════════════════════════════════════════════
--- ÉTAPE 2 : CORRECTION (à décommenter après validation)
--- ═════════════════════════════════════════════════════════════════════
-
--- MySQL
-/*
-UPDATE orders
-SET 
-  status = 'pending_quote',
-  priced_at = NULL,
-  quoted_at = NULL,
-  quoted_by = NULL,
-  invoice_number = NULL,
-  invoice_date = NULL,
-  updated_at = NOW()
-WHERE status IN ('quoted', 'Chiffrée', 'confirmed', 'Confirmée')
-  AND (total <= 0 OR total IS NULL OR total_amount <= 0 OR total_amount IS NULL);
-
--- Enregistrer la migration
-INSERT INTO schema_migrations (version, name, applied_at)
-VALUES ('004', 'fix_quoted_without_amount', NOW())
-ON DUPLICATE KEY UPDATE applied_at = NOW();
-*/
-
--- PostgreSQL
-/*
 BEGIN;
 
-UPDATE public.orders
-SET 
-  status = 'pending_quote',
-  priced_at = NULL,
-  quoted_at = NULL,
-  quoted_by = NULL,
-  invoice_number = NULL,
-  invoice_date = NULL,
-  updated_at = NOW()
-WHERE status IN ('quoted', 'Chiffrée', 'confirmed', 'Confirmée')
-  AND (total <= 0 OR total IS NULL OR total_amount <= 0 OR total_amount IS NULL);
+-- 1. Enregistrement d'une ligne d'audit dans order_status_history par commande concernée
+INSERT INTO order_status_history (order_id, status, note, changed_by, created_at)
+SELECT 
+    id, 
+    'pending_quote', 
+    'Réinitialisation de cohérence : commande postérieure à pending_quote sans montant ramenée à chiffrer', 
+    NULL, 
+    NOW()
+FROM orders
+WHERE status NOT IN ('pending_quote', 'pending', 'En attente de chiffrage', 'cancelled', 'Annulée')
+  AND COALESCE(total, 0) <= 0;
 
--- Enregistrer la migration
-INSERT INTO public.schema_migrations (version, name, applied_at)
-VALUES ('004', 'fix_quoted_without_amount', NOW())
-ON CONFLICT (version) DO UPDATE SET applied_at = NOW();
+-- 2. Remise au statut pending_quote et réinitialisation de la facture
+UPDATE orders
+SET 
+    status = 'pending_quote',
+    invoice_number = NULL,
+    invoice_date = NULL,
+    priced_at = NULL,
+    updated_at = NOW()
+WHERE status NOT IN ('pending_quote', 'pending', 'En attente de chiffrage', 'cancelled', 'Annulée')
+  AND COALESCE(total, 0) <= 0;
+
+-- 3. Ajout de la contrainte CHECK en NOT VALID (n'interrompt pas les écritures existantes)
+ALTER TABLE orders
+DROP CONSTRAINT IF EXISTS chk_orders_positive_total_when_quoted;
+
+ALTER TABLE orders
+ADD CONSTRAINT chk_orders_positive_total_when_quoted
+CHECK (
+    status IN ('pending_quote', 'pending', 'En attente de chiffrage', 'cancelled', 'Annulée')
+    OR (COALESCE(total, 0) > 0)
+) NOT VALID;
+
+-- 4. Validation de la contrainte une fois les données assainies
+ALTER TABLE orders
+VALIDATE CONSTRAINT chk_orders_positive_total_when_quoted;
 
 COMMIT;
-*/
-
--- ═════════════════════════════════════════════════════════════════════
--- ÉTAPE 3 : VÉRIFICATION POST-CORRECTION
--- ═════════════════════════════════════════════════════════════════════
-
--- MySQL
-/*
-SELECT 
-  'Commandes restantes avec status chiffré mais montant 0' AS verif,
-  COUNT(*) AS nombre
-FROM orders
-WHERE status IN ('quoted', 'Chiffrée', 'confirmed', 'Confirmée')
-  AND (total <= 0 OR total IS NULL OR total_amount <= 0 OR total_amount IS NULL);
-*/
-
--- PostgreSQL
-/*
-SELECT 
-  'Commandes restantes avec status chiffré mais montant 0' AS verif,
-  COUNT(*) AS nombre
-FROM public.orders
-WHERE status IN ('quoted', 'Chiffrée', 'confirmed', 'Confirmée')
-  AND (total <= 0 OR total IS NULL OR total_amount <= 0 OR total_amount IS NULL);
-*/

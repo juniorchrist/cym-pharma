@@ -34,18 +34,28 @@ app.set('trust proxy', 1);
 app.use(express.json({ limit: '2mb' }));
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
+const CORS_ORIGINS_ENV = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)
+  : [];
+
 const ALLOWED_ORIGINS = new Set([
   FRONTEND_URL,
   'https://cympharma.infinityfreeapp.com',
   'http://localhost:3000',
+  'http://localhost:4173',
   'http://localhost:5173',
   'http://127.0.0.1:3000',
+  'http://127.0.0.1:4173',
   'http://127.0.0.1:5173',
+  ...CORS_ORIGINS_ENV,
 ]);
 
 app.use((req, res, next) => {
   const origin = req.headers.origin || '';
-  if (ALLOWED_ORIGINS.has(origin) || origin.endsWith('.infinityfreeapp.com')) {
+  const isLocalDev = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  const isAllowed = ALLOWED_ORIGINS.has(origin) || origin.endsWith('.infinityfreeapp.com') || isLocalDev;
+
+  if (isAllowed && origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -163,20 +173,31 @@ router.get('/health', async (_req, res) => {
   }
 });
 
-// 1.bis. Synchronisation légère d'état (évite de transférer toute la base pour détecter une mise à jour)
-router.get('/sync/state', async (_req, res) => {
+// 1.bis. Synchronisation légère d'état (sécurisée : filtrée par utilisateur ou accès admin)
+router.get('/sync/state', async (req, res) => {
   try {
-    const { data: latestOrder } = await db
+    const authUser = await requireUser(req, res);
+    if (!authUser) return;
+
+    const isAdmin = authUser.profile?.role === 'admin';
+
+    let orderQuery = db.from('orders').select('updated_at, priced_at');
+    let pendingQuery = db
       .from('orders')
-      .select('updated_at, priced_at')
+      .select('id', { count: 'exact', head: true })
+      .in('status', ['pending_quote', 'pending', 'En attente de chiffrage']);
+
+    if (!isAdmin) {
+      orderQuery = orderQuery.eq('user_id', authUser.user.id);
+      pendingQuery = pendingQuery.eq('user_id', authUser.user.id);
+    }
+
+    const { data: latestOrder } = await orderQuery
       .order('updated_at', { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    const { count: pendingCount } = await db
-      .from('orders')
-      .select('id', { count: 'exact', head: true })
-      .in('status', ['pending_quote', 'pending']);
+    const { count: pendingCount } = await pendingQuery;
 
     send(res, 200, {
       success: true,
@@ -184,6 +205,7 @@ router.get('/sync/state', async (_req, res) => {
         server_time: new Date().toISOString(),
         last_order_update: latestOrder?.updated_at || latestOrder?.priced_at || null,
         pending_quotes_count: pendingCount || 0,
+        role: isAdmin ? 'admin' : 'client',
       },
     });
   } catch (err) {
@@ -517,14 +539,65 @@ router.get('/admin/dashboard', async (req, res) => {
       db.from('profiles').select('count', { count: 'exact', head: true }).neq('role', 'admin'),
     ]);
     const orders = oRes.data || [];
+
+    let pendingQuotes = 0;
+    let quotedOrders = 0;
+    let confirmedOrders = 0;
+    let inPreparationOrders = 0;
+    let shippedOrders = 0;
+    let deliveredOrders = 0;
+    let cancelledOrders = 0;
+
+    for (const o of orders) {
+      const s = (o.status || '').toLowerCase().trim();
+      if (s === 'pending_quote' || s === 'pending' || s.includes('chiffrer') || s.includes('attente')) {
+        pendingQuotes++;
+      } else if (s === 'quoted' || s.includes('chiffrée') || s.includes('chiffree')) {
+        quotedOrders++;
+      } else if (s === 'confirmed' || s === 'confirmée' || s === 'confirmee') {
+        confirmedOrders++;
+      } else if (s === 'in_preparation' || s.includes('préparation') || s.includes('preparation')) {
+        inPreparationOrders++;
+      } else if (s === 'shipped' || s.includes('expédi') || s.includes('expedi')) {
+        shippedOrders++;
+      } else if (s === 'delivered' || s.includes('livr')) {
+        deliveredOrders++;
+      } else if (s === 'cancelled' || s.includes('annul')) {
+        cancelledOrders++;
+      }
+    }
+
     const stats = {
       totalProducts: pRes.count || 0,
       totalOrders: orders.length,
       totalClients: uRes.count || 0,
-      pendingQuotes: orders.filter((o) => o.status === 'En attente de chiffrage').length,
-      confirmedOrders: orders.filter((o) => o.status === 'Confirmée').length,
+      pendingQuotes,
+      quotedOrders,
+      confirmedOrders,
+      inPreparationOrders,
+      shippedOrders,
+      deliveredOrders,
+      cancelledOrders,
     };
     send(res, 200, { success: true, data: { stats } });
+  } catch (err) {
+    send(res, 500, { success: false, message: err.message });
+  }
+});
+
+router.get('/admin/stats', async (req, res) => {
+  const adminId = await requireAdmin(req, res);
+  if (!adminId) return;
+  try {
+    const { data: orders, error } = await db.from('orders').select('status, total, coalesce:total(0)');
+    if (error) { send(res, 500, { success: false, message: error.message }); return; }
+
+    const counts = {};
+    for (const o of (orders || [])) {
+      const s = o.status || 'unknown';
+      counts[s] = (counts[s] || 0) + 1;
+    }
+    send(res, 200, { success: true, data: { counts, total: (orders || []).length } });
   } catch (err) {
     send(res, 500, { success: false, message: err.message });
   }
@@ -880,11 +953,7 @@ async function handleOrderQuote(req, res) {
       status: 'quoted',
       total: calculatedTotal,
       subtotal: calculatedTotal,
-      subtotal_ht: calculatedTotal,
-      total_amount: calculatedTotal,
       priced_at: now,
-      quoted_at: now,
-      quoted_by: adminId,
       invoice_number: invoiceNum,
       invoice_date: now,
       updated_at: now,

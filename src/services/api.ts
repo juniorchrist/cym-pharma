@@ -59,10 +59,21 @@ async function request<T = unknown>(
 
   const url = buildApiUrl(endpoint);
 
+  const controller = new AbortController();
+  const timeoutMs = 25000;
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  if (options.signal) {
+    options.signal.addEventListener('abort', () => controller.abort());
+  }
+
   try {
     const response = await fetch(url, {
       ...options,
       headers,
+      signal: controller.signal,
       cache: 'no-store',
     });
 
@@ -75,22 +86,46 @@ async function request<T = unknown>(
       };
     }
 
-    if (!response.ok) {
-      const errJson = await response.json().catch(() => ({}));
+    const contentType = response.headers.get('content-type') || '';
+    const isJson = contentType.includes('application/json');
+
+    if (!isJson) {
+      if (!response.ok) {
+        return {
+          success: false,
+          message: response.status === 404 ? `API introuvable : ${url}` : `Erreur serveur (HTTP ${response.status})`,
+        };
+      }
       return {
         success: false,
-        message: errJson.message || `Erreur serveur (HTTP ${response.status})`,
+        message: `API introuvable (réponse non JSON) : ${url}`,
       };
     }
 
-    const data = (await response.json()) as ApiResponse<T>;
-    return data;
-  } catch (error) {
-    console.warn(`[CYM API] Échec de la requête vers ${url}:`, error);
+    const json = await response.json();
+
+    if (!response.ok) {
+      return {
+        success: false,
+        message: json.message ? `HTTP ${response.status} : ${json.message}` : `Erreur serveur (HTTP ${response.status})`,
+      };
+    }
+
+    return json as ApiResponse<T>;
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      return {
+        success: false,
+        message: 'Le serveur démarre, réessayez dans quelques instants (délai de 25s dépassé).',
+      };
+    }
+    console.warn(`[CYM API] Échec réseau vers ${url}:`, error);
     return {
       success: false,
-      message: 'Impossible de contacter le serveur CYM Pharma. Veuillez vérifier votre connexion.',
+      message: `Impossible de contacter le serveur CYM Pharma (${url}). Vérifiez votre connexion.`,
     };
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -527,168 +562,22 @@ export const Products = {
 // ── Commandes ──
 export const Orders = {
   async create(payload: CreateOrderPayload): Promise<ApiResponse<{ order: Order }>> {
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const currentUser = storage.getUser();
-
-        if (!payload.items || payload.items.length === 0) {
-          return { success: false, message: 'La commande doit comporter au moins un article.' };
-        }
-
-        const orderData = {
-          user_id: currentUser?.id || null,
-          establishment_name: payload.establishment_name || (payload as any).establishmentName || '',
-          shipping_address: payload.shipping_address || payload.shippingAddress?.street || '',
-          shipping_city: payload.shipping_city || payload.shippingAddress?.city || 'Abidjan',
-          notes: payload.notes || payload.shippingAddress?.notes || '',
-        };
-
-        const itemsData = payload.items.map((it: any) => {
-          const rawId = String(it.productId || it.product_id || it.id || '').trim();
-          return {
-            productId: rawId || null,
-            product_id: rawId || null,
-            reference: it.reference || null,
-            name: it.name || 'Dispositif médical',
-            unit: it.unit || 'Unité',
-            conditionnement: it.conditionnement || null,
-            quantity: Math.max(1, Number(it.quantity || it.qty || 1)),
-          };
-        });
-
-        // Appel RPC atomique : commande + lignes + historique dans 1 seule transaction ACID
-        const { data: rpcResult, error: rpcError } = await supabase.rpc('create_order_atomic', {
-          p_order_data: orderData,
-          p_items: itemsData,
-        });
-
-        if (rpcError) {
-          const msg = rpcError.message || '';
-          if (msg.includes('order_items_product_id_fkey') || msg.includes('violates foreign key constraint')) {
-            return {
-              success: false,
-              message: 'Un des articles sélectionnés ne correspond pas à un produit valide du catalogue CYM Pharma. Veuillez retirer les articles obsolètes de votre panier.',
-            };
-          }
-          return { success: false, message: msg || 'Erreur lors de la création de la commande.' };
-        }
-
-        if (!rpcResult || !rpcResult.order) {
-          return { success: false, message: 'La commande n\'a pas pu être enregistrée.' };
-        }
-
-        return { success: true, data: { order: rpcResult.order as Order } };
-      } catch (err: any) {
-        return { success: false, message: err?.message || 'Erreur lors de la création de la commande.' };
-      }
-    }
-
     return request<{ order: Order }>('/orders', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
   },
 
-
   async list(params: Record<string, string | number> = {}): Promise<ApiResponse<{ orders: Order[] }>> {
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const user = storage.getUser();
-        const sessionRes = await supabase.auth.getSession();
-        const activeUserId = sessionRes.data?.session?.user?.id || user?.id;
-
-        let query = supabase.from('orders').select('*, items:order_items(*)');
-
-        if (user?.role !== 'admin' && activeUserId) {
-          query = query.eq('user_id', activeUserId);
-        }
-
-        const { data, error } = await query.order('created_at', { ascending: false });
-        if (!error && data) {
-          const mappedOrders: Order[] = data.map((o: any) => {
-            const mappedItems = (o.items || []).map((it: any) => ({
-              ...it,
-              productId: it.product_id || null,
-              product_id: it.product_id || null,
-              quantity: Number(it.quantity) || 1,
-              unit_price: Number(it.unit_price) || 0,
-              line_total: Number(it.line_total) || ((Number(it.unit_price) || 0) * (Number(it.quantity) || 1)),
-            }));
-            const computedItemsTotal = mappedItems.reduce((acc: number, it: any) => acc + (it.line_total || 0), 0);
-            const resolvedTotal = (typeof o.total === 'number' && o.total > 0) ? o.total : (computedItemsTotal > 0 ? computedItemsTotal : (o.total || 0));
-
-            return {
-              ...o,
-              orderNumber: o.order_number || o.id,
-              order_number: o.order_number || o.id,
-              total: resolvedTotal,
-              subtotal: resolvedTotal,
-              item_count: mappedItems.length,
-              items: mappedItems,
-            };
-          });
-          return { success: true, data: { orders: mappedOrders } };
-        }
-      } catch (err: any) {
-        console.warn('[CYM] Supabase orders list fallback to HTTP:', err);
-      }
-    }
-
     const query = new URLSearchParams(params as Record<string, string>).toString();
     return request<{ orders: Order[] }>(`/orders${query ? `?${query}` : ''}`);
   },
 
   async get(id: string | number): Promise<ApiResponse<{ order: Order }>> {
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('orders')
-          .select('*, items:order_items(*)')
-          .or(`id.eq.${id},order_number.eq.${id}`)
-          .maybeSingle();
-
-        if (!error && data) {
-          const mappedItems = (data.items || []).map((it: any) => ({
-            ...it,
-            productId: it.product_id || null,
-            product_id: it.product_id || null,
-            quantity: Number(it.quantity) || 1,
-            unit_price: Number(it.unit_price) || 0,
-            line_total: Number(it.line_total) || ((Number(it.unit_price) || 0) * (Number(it.quantity) || 1)),
-          }));
-          const computedItemsTotal = mappedItems.reduce((acc: number, it: any) => acc + (it.line_total || 0), 0);
-          const resolvedTotal = (typeof data.total === 'number' && data.total > 0) ? data.total : (computedItemsTotal > 0 ? computedItemsTotal : (data.total || 0));
-
-          const mappedOrder: Order = {
-            ...data,
-            orderNumber: data.order_number || data.id,
-            order_number: data.order_number || data.id,
-            total: resolvedTotal,
-            subtotal: resolvedTotal,
-            item_count: mappedItems.length,
-            items: mappedItems,
-          };
-          return { success: true, data: { order: mappedOrder } };
-        }
-      } catch (err: any) {
-        console.warn('[CYM] Supabase orders get fallback to HTTP:', err);
-      }
-    }
     return request<{ order: Order }>(`/orders/${id}`);
   },
 
   async cancel(id: string | number, reason: string): Promise<ApiResponse<void>> {
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const { error } = await supabase
-          .from('orders')
-          .update({ status: 'Annulée', cancel_reason: reason, cancelled_at: new Date().toISOString() })
-          .eq('id', String(id));
-        if (!error) return { success: true };
-      } catch (err: any) {
-        console.warn('[CYM] Supabase orders cancel fallback to HTTP:', err);
-      }
-    }
     return request<void>(`/orders/${id}/cancel`, {
       method: 'PATCH',
       body: JSON.stringify({ reason }),
@@ -1214,181 +1103,11 @@ export const Admin = {
   },
 
   async orders(params: Record<string, string | number> = {}): Promise<ApiResponse<{ orders: Order[] }>> {
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        let query = supabase
-          .from('orders')
-          .select('*, items:order_items(*)');
-
-        if (params.status) {
-          query = query.eq('status', String(params.status));
-        }
-
-        const { data: rawOrders, error } = await query.order('created_at', { ascending: false });
-
-        if (!error && rawOrders) {
-          // Enrichir avec les profils clients (puisque user_id lie auth.users)
-          const userIds = Array.from(new Set(rawOrders.map((o: any) => o.user_id).filter(Boolean)));
-          let profileMap = new Map<string, any>();
-
-          if (userIds.length > 0) {
-            const { data: profiles } = await supabase
-              .from('profiles')
-              .select('id, name, first_name, last_name, email, phone, establishment_name, commune, address')
-              .in('id', userIds);
-
-            if (profiles) {
-              profileMap = new Map(profiles.map((p) => [p.id, p]));
-            }
-          }
-
-          const enrichedOrders: Order[] = rawOrders.map((o: any) => {
-            const prof = o.user_id ? profileMap.get(o.user_id) : null;
-            const items = Array.isArray(o.items) ? o.items : [];
-            const clientName =
-              prof?.name ||
-              [prof?.first_name, prof?.last_name].filter(Boolean).join(' ') ||
-              o.establishment_name ||
-              'Client CYM Pharma';
-
-            return {
-              id: o.id,
-              order_number: o.order_number || o.id,
-              orderNumber: o.order_number || o.id,
-              user_id: o.user_id,
-              userId: o.user_id,
-              establishment_name: o.establishment_name || prof?.establishment_name || '',
-              shipping_address: o.shipping_address || prof?.address || '',
-              shipping_city: o.shipping_city || prof?.commune || 'Abidjan',
-              shipping_notes: o.shipping_notes || '',
-              status: o.status || 'En attente de chiffrage',
-              notes: o.notes || '',
-              subtotal: Number(o.subtotal) || 0,
-              total: Number(o.total) || 0,
-              currency: o.currency || 'FCFA',
-              invoice_number: o.invoice_number,
-              invoice_date: o.invoice_date,
-              priced_at: o.priced_at,
-              shipped_at: o.shipped_at,
-              delivered_at: o.delivered_at,
-              cancelled_at: o.cancelled_at,
-              cancel_reason: o.cancel_reason,
-              created_at: o.created_at,
-              updated_at: o.updated_at,
-              item_count: items.length,
-              items: items.map((it: any) => ({
-                id: it.id,
-                order_id: it.order_id,
-                productId: it.product_id,
-                product_id: it.product_id,
-                reference: it.reference,
-                name: it.name,
-                unit: it.unit,
-                conditionnement: it.conditionnement,
-                quantity: Number(it.quantity) || 1,
-                unit_price: Number(it.unit_price) || 0,
-                unitPrice: Number(it.unit_price) || 0,
-                line_total: Number(it.line_total) || 0,
-                currency: it.currency || 'FCFA',
-              })),
-              client: prof
-                ? {
-                    id: prof.id,
-                    name: clientName,
-                    email: prof.email,
-                    phone: prof.phone,
-                    establishment_name: prof.establishment_name,
-                  }
-                : undefined,
-              client_name: clientName,
-              client_email: prof?.email || undefined,
-              client_phone: prof?.phone || undefined,
-            } as Order;
-          });
-
-          return { success: true, data: { orders: enrichedOrders } };
-        }
-      } catch (err) {
-        console.warn('[CYM] Supabase Admin.orders fallback to HTTP:', err);
-      }
-    }
-
     const query = new URLSearchParams(params as Record<string, string>).toString();
     return request<{ orders: Order[] }>(`/admin/orders${query ? `?${query}` : ''}`);
   },
 
   async getOrderPricing(orderId: string | number): Promise<ApiResponse<{ order: Order; pricingSummary: OrderPricingSummary }>> {
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const { data: order, error } = await supabase
-          .from('orders')
-          .select('*, items:order_items(*)')
-          .eq('id', String(orderId))
-          .maybeSingle();
-
-        if (!error && order) {
-          const items = Array.isArray(order.items) ? order.items : [];
-
-          // Récupérer les prix de référence depuis la table products pour pré-remplissage
-          const productIds = items.map((it: any) => it.product_id).filter(Boolean);
-          let refPriceMap = new Map<string, number>();
-
-          if (productIds.length > 0) {
-            const { data: prods } = await supabase
-              .from('products')
-              .select('id, ref_price')
-              .in('id', productIds);
-
-            if (prods) {
-              refPriceMap = new Map(prods.map((p) => [String(p.id), Number(p.ref_price) || 0]));
-            }
-          }
-
-          const lines: PricingLine[] = items.map((it: any) => {
-            const refPrice = refPriceMap.get(String(it.product_id)) ?? 0;
-            const currentUnitPrice = Number(it.unit_price) || 0;
-            const unitPrice = currentUnitPrice > 0 ? currentUnitPrice : refPrice;
-            const qty = Number(it.quantity) || 1;
-            const lineTotal = unitPrice * qty;
-
-            return {
-              itemId: it.id,
-              productId: it.product_id || it.id,
-              name: it.name || it.product_name || 'Dispositif médical',
-              reference: it.reference || '',
-              unit: it.unit || it.conditionnement || 'Unité',
-              quantity: qty,
-              ref_price: refPrice > 0 ? refPrice : null,
-              unit_price: currentUnitPrice > 0 ? currentUnitPrice : (refPrice > 0 ? refPrice : null),
-              line_total: lineTotal > 0 ? lineTotal : null,
-              missing_price: unitPrice <= 0,
-            };
-          });
-
-          const totalQuantity = lines.reduce((acc, l) => acc + l.quantity, 0);
-          const totalAmount = lines.reduce((acc, l) => acc + (l.line_total || 0), 0);
-          const hasMissingPrices = lines.some((l) => l.missing_price);
-
-          const pricingSummary: OrderPricingSummary = {
-            orderId: order.id,
-            orderNumber: order.order_number || order.id,
-            status: order.status,
-            client: order.establishment_name || 'Établissement',
-            lines,
-            totalQuantity,
-            totalAmount: totalAmount > 0 ? totalAmount : null,
-            hasMissingPrices,
-            canValidate: !hasMissingPrices && totalAmount > 0,
-            pricedAt: order.priced_at,
-          };
-
-          return { success: true, data: { order: order as Order, pricingSummary } };
-        }
-      } catch (err) {
-        console.warn('[CYM] Supabase Admin.getOrderPricing fallback to HTTP:', err);
-      }
-    }
-
     return request<{ order: Order; pricingSummary: OrderPricingSummary }>(`/admin/orders/${orderId}/pricing`);
   },
 
@@ -1396,96 +1115,6 @@ export const Admin = {
     orderId: string | number,
     items: { itemId?: number | string; productId: string | number; unit_price: number; reference?: string; quantity?: number }[]
   ): Promise<ApiResponse<{ order: Order }>> {
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        // 1. Charger toutes les lignes actuelles de la commande pour un matching direct en mémoire
-        const { data: itemRows, error: fetchErr } = await supabase
-          .from('order_items')
-          .select('*')
-          .eq('order_id', String(orderId));
-
-        if (fetchErr) {
-          console.warn('[CYM] Erreur lecture order_items dans saveOrderPricing:', fetchErr);
-        }
-
-        const existingList = itemRows || [];
-        let computedTotal = 0;
-
-        for (const item of items) {
-          const unitPrice = Number(item.unit_price) || 0;
-
-          // Recherche multi-critères fiable sans risque d'erreur de cast PostgreSQL sur id/bigint
-          let matchedRow = existingList.find((row: any) => {
-            if (item.itemId && String(row.id) === String(item.itemId)) return true;
-            if (item.productId && row.product_id && String(row.product_id) === String(item.productId)) return true;
-            if (item.productId && !isNaN(Number(item.productId)) && Number(row.id) === Number(item.productId)) return true;
-            if (item.reference && row.reference && row.reference === item.reference) return true;
-            return false;
-          });
-
-          if (!matchedRow && existingList.length === 1 && items.length === 1) {
-            matchedRow = existingList[0];
-          }
-
-          if (matchedRow) {
-            const qty = Number(matchedRow.quantity) || Number(item.quantity) || 1;
-            const lineTotal = unitPrice * qty;
-            computedTotal += lineTotal;
-
-            const { error: itemUpdateErr } = await supabase
-              .from('order_items')
-              .update({ unit_price: unitPrice, line_total: lineTotal })
-              .eq('id', matchedRow.id);
-
-            if (itemUpdateErr) {
-              console.warn(`[CYM] Erreur update order_items #${matchedRow.id}:`, itemUpdateErr);
-            }
-          } else {
-            const qty = Number(item.quantity) || 1;
-            computedTotal += unitPrice * qty;
-          }
-        }
-
-        if (computedTotal === 0 && items.length > 0) {
-          computedTotal = items.reduce((acc, it) => acc + (Number(it.unit_price) || 0) * (Number(it.quantity) || 1), 0);
-        }
-
-        const now = new Date().toISOString();
-        const { error: orderUpdateErr } = await supabase
-          .from('orders')
-          .update({
-            subtotal: computedTotal,
-            total: computedTotal,
-            updated_at: now,
-          })
-          .eq('id', String(orderId));
-
-        if (orderUpdateErr) {
-          console.warn('[CYM] Erreur update orders Supabase:', orderUpdateErr);
-        }
-
-        const { data: updatedOrder } = await supabase
-          .from('orders')
-          .select('*, items:order_items(*)')
-          .eq('id', String(orderId))
-          .single();
-
-        return {
-          success: true,
-          data: {
-            order: {
-              ...updatedOrder,
-              orderNumber: updatedOrder?.order_number || updatedOrder?.id,
-              total: computedTotal,
-              subtotal: computedTotal,
-            } as Order,
-          },
-        };
-      } catch (err: any) {
-        console.warn('[CYM] Supabase saveOrderPricing fallback to HTTP:', err);
-      }
-    }
-
     return request<{ order: Order }>(`/admin/orders/${orderId}/save-pricing`, {
       method: 'POST',
       body: JSON.stringify({ items }),
@@ -1496,170 +1125,15 @@ export const Admin = {
     orderId: string | number,
     items: { itemId?: number | string; productId: string | number; unit_price: number; reference?: string; quantity?: number }[]
   ): Promise<ApiResponse<{ order: Order }>> {
-    // 1. Appel prioritaire vers le serveur backend Render (service_role, contourne RLS en toute sécurité)
-    try {
-      const httpRes = await request<{ order: Order }>(`/admin/orders/${orderId}/quote`, {
-        method: 'POST',
-        body: JSON.stringify({ items }),
-      });
-
-      if (httpRes.success && httpRes.data?.order) {
-        return httpRes;
-      }
-      if (!httpRes.success && httpRes.message && !httpRes.message.includes('fetch')) {
-        // Erreur fonctionnelle explicite du serveur (ex: 422 prix manquant)
-        return httpRes;
-      }
-    } catch (httpErr) {
-      console.warn('[CYM] Échec appel HTTP quote, tentative repli Supabase:', httpErr);
-    }
-
-    // 2. Repli direct Supabase si le backend est temporairement inaccessible
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const { data: itemRows, error: fetchErr } = await supabase
-          .from('order_items')
-          .select('*')
-          .eq('order_id', String(orderId));
-
-        if (fetchErr) {
-          return { success: false, message: `Impossible de lire les articles: ${fetchErr.message}` };
-        }
-
-        const existingList = itemRows || [];
-        let computedTotal = 0;
-
-        for (const item of items) {
-          const unitPrice = Number(item.unit_price) || 0;
-
-          let matchedRow = existingList.find((row: any) => {
-            if (item.itemId && String(row.id) === String(item.itemId)) return true;
-            if (item.productId && row.product_id && String(row.product_id) === String(item.productId)) return true;
-            if (item.productId && !isNaN(Number(item.productId)) && Number(row.id) === Number(item.productId)) return true;
-            if (item.reference && row.reference && row.reference === item.reference) return true;
-            return false;
-          });
-
-          if (!matchedRow && existingList.length === 1 && items.length === 1) {
-            matchedRow = existingList[0];
-          }
-
-          if (matchedRow) {
-            const qty = Number(matchedRow.quantity) || Number(item.quantity) || 1;
-            const lineTotal = unitPrice * qty;
-            computedTotal += lineTotal;
-
-            const { error: itemUpdateErr } = await supabase
-              .from('order_items')
-              .update({ unit_price: unitPrice, line_total: lineTotal })
-              .eq('id', matchedRow.id);
-
-            if (itemUpdateErr) {
-              return { success: false, message: `Échec mise à jour article #${matchedRow.id}: ${itemUpdateErr.message}` };
-            }
-          } else {
-            const qty = Number(item.quantity) || 1;
-            computedTotal += unitPrice * qty;
-          }
-        }
-
-        if (computedTotal <= 0) {
-          return { success: false, message: 'Le montant total doit être supérieur à 0 FCFA pour valider.' };
-        }
-
-        const now = new Date().toISOString();
-        const invoiceNum = `FAC-${String(orderId).replace('CMD-', '')}`;
-
-        const { error: orderUpdateErr } = await supabase
-          .from('orders')
-          .update({
-            status: 'quoted',
-            subtotal: computedTotal,
-            total: computedTotal,
-            priced_at: now,
-            quoted_at: now,
-            invoice_number: invoiceNum,
-            invoice_date: now,
-            updated_at: now,
-          })
-          .eq('id', String(orderId));
-
-        if (orderUpdateErr) {
-          return { success: false, message: `Échec confirmation commande Supabase: ${orderUpdateErr.message}` };
-        }
-
-        try {
-          const userRes = await supabase.auth.getUser();
-          await supabase.from('order_status_history').insert({
-            order_id: String(orderId),
-            status: 'quoted',
-            note: `Chiffrage validé : ${computedTotal} FCFA`,
-            changed_by: userRes.data?.user?.id || null,
-          });
-        } catch {}
-
-        const { data: updatedOrder } = await supabase
-          .from('orders')
-          .select('*, items:order_items(*)')
-          .eq('id', String(orderId))
-          .single();
-
-        return {
-          success: true,
-          data: {
-            order: {
-              ...updatedOrder,
-              orderNumber: updatedOrder?.order_number || updatedOrder?.id,
-              total: computedTotal,
-              subtotal: computedTotal,
-              status: 'quoted',
-            } as Order,
-          },
-        };
-      } catch (err: any) {
-        return { success: false, message: err.message || 'Erreur lors du chiffrage' };
-      }
-    }
-
-    return { success: false, message: 'Serveur de chiffrage indisponible.' };
+    return request<{ order: Order }>(`/admin/orders/${orderId}/quote`, {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    });
   },
 
   async updateOrderStatus(id: string | number, status: string): Promise<ApiResponse<void>> {
-    if (isSupabaseConfigured() && supabase) {
-      try {
-        const updatePayload: Record<string, any> = {
-          status,
-          updated_at: new Date().toISOString(),
-        };
-
-        if (status === 'Livrée' || status === 'delivered') {
-          updatePayload.delivered_at = new Date().toISOString();
-        } else if (status === 'Expédiée' || status === 'shipped') {
-          updatePayload.shipped_at = new Date().toISOString();
-        }
-
-        const { error } = await supabase
-          .from('orders')
-          .update(updatePayload)
-          .eq('id', String(id));
-
-        if (!error) {
-          const userRes = await supabase.auth.getUser();
-          await supabase.from('order_status_history').insert({
-            order_id: String(id),
-            status,
-            note: `Statut mis à jour par l'administrateur`,
-            changed_by: userRes.data.user?.id || null,
-          });
-          return { success: true };
-        }
-      } catch (err) {
-        console.warn('[CYM] Supabase updateOrderStatus fallback to HTTP:', err);
-      }
-    }
-
     return request<void>(`/admin/orders/${id}/status`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify({ status }),
     });
   },

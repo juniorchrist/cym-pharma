@@ -10,6 +10,8 @@ import { defineConfig } from 'vite';
  * En développement, utilisez Supabase directement via VITE_SUPABASE_URL.
  */
 export default defineConfig(() => {
+  const backendTarget = process.env.VITE_BACKEND_URL || 'http://localhost:4000';
+
   return {
     base: '/',
     plugins: [react(), tailwindcss()],
@@ -19,11 +21,27 @@ export default defineConfig(() => {
       },
     },
     server: {
+      proxy: {
+        '/api': {
+          target: backendTarget,
+          changeOrigin: true,
+          secure: false,
+        },
+      },
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
+    },
+    preview: {
+      proxy: {
+        '/api': {
+          target: backendTarget,
+          changeOrigin: true,
+          secure: false,
+        },
+      },
     },
     build: {
       chunkSizeWarningLimit: 2000,

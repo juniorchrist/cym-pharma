@@ -1548,10 +1548,8 @@ export const Admin: React.FC = () => {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {ordersList.slice(0, 5).map((ord) => {
-                        const isActuallyPriced = Boolean(ord.total && ord.total > 0 && !isPendingQuote(ord.status));
-                        const effectiveStatus = isActuallyPriced ? ord.status : 'pending_quote';
-                        const stInfo = getOrderStatus(effectiveStatus);
-                        const isPending = !isActuallyPriced;
+                        const stInfo = getOrderStatus(ord.status);
+                        const isPending = isPendingQuote(ord.status);
                         return (
                           <tr key={ord.id} className="hover:bg-slate-50 transition">
                             <td className="py-3.5 font-bold font-mono text-[#155E95]">
@@ -1606,10 +1604,8 @@ export const Admin: React.FC = () => {
                 {/* Vue Mobile (< 768px) : Liste de Cartes Complètes Sans Débordement */}
                 <div className="md:hidden space-y-3">
                   {ordersList.slice(0, 5).map((ord) => {
-                    const isActuallyPriced = Boolean(ord.total && ord.total > 0 && !isPendingQuote(ord.status));
-                    const effectiveStatus = isActuallyPriced ? ord.status : 'pending_quote';
-                    const stInfo = getOrderStatus(effectiveStatus);
-                    const isPending = !isActuallyPriced;
+                    const stInfo = getOrderStatus(ord.status);
+                    const isPending = isPendingQuote(ord.status);
                     const count = ord.item_count || ord.items?.length || 1;
                     return (
                       <div key={ord.id} className="p-4 rounded-2xl border border-slate-200 bg-white space-y-3 shadow-xs">
@@ -1867,7 +1863,7 @@ export const Admin: React.FC = () => {
                 <div className="admin-card p-4">
                   <p className="text-[10px] uppercase font-bold text-amber-600 mb-1">À chiffrer</p>
                   <p className="text-2xl font-bold text-amber-600">
-                    {ordersList.filter((o) => (o.status || '').toLowerCase().includes('chiffrer') || o.status === 'pending').length}
+                    {ordersList.filter((o) => isPendingQuote(o.status)).length}
                   </p>
                 </div>
                 <div className="admin-card p-4">
@@ -1961,10 +1957,8 @@ export const Admin: React.FC = () => {
                     </thead>
                     <tbody id="orders-table-body" className="divide-y divide-slate-100">
                       {filteredOrders.map((o) => {
-                        const isActuallyPriced = Boolean(o.total && o.total > 0 && !isPendingQuote(o.status));
-                        const effectiveStatus = isActuallyPriced ? o.status : 'pending_quote';
-                        const stInfo = getOrderStatus(effectiveStatus);
-                        const isPending = !isActuallyPriced;
+                        const stInfo = getOrderStatus(o.status);
+                        const isPending = isPendingQuote(o.status);
                         return (
                           <tr key={o.id} className="hover:bg-slate-50 transition">
                             <td className="py-3.5 font-mono font-bold text-[#155E95]">
@@ -2048,10 +2042,8 @@ export const Admin: React.FC = () => {
                 {/* Vue Mobile (< 768px) : Liste de Cartes Complètes Sans Débordement */}
                 <div className="md:hidden space-y-3">
                   {filteredOrders.map((o) => {
-                    const isActuallyPriced = Boolean(o.total && o.total > 0 && !isPendingQuote(o.status));
-                    const effectiveStatus = isActuallyPriced ? o.status : 'pending_quote';
-                    const stInfo = getOrderStatus(effectiveStatus);
-                    const isPending = !isActuallyPriced;
+                    const stInfo = getOrderStatus(o.status);
+                    const isPending = isPendingQuote(o.status);
                     const count = o.item_count || o.items?.length || 1;
                     return (
                       <div key={o.id} className="p-4 rounded-2xl border border-slate-200 bg-white space-y-3 shadow-xs">
