@@ -436,7 +436,24 @@ router.post('/orders', async (req, res) => {
     userId = data?.user?.id || null;
   }
 
-  const { items, establishment_name, shipping_address, shipping_city, notes } = req.body;
+  const items = req.body.items;
+  const establishment_name = (req.body.establishment_name || req.body.establishmentName || '').trim();
+  const shipping_address = (
+    req.body.shipping_address ||
+    req.body.shippingAddress?.street ||
+    req.body.shippingAddress?.address ||
+    ''
+  ).trim();
+  const shipping_city = (
+    req.body.shipping_city ||
+    req.body.shippingAddress?.city ||
+    'Abidjan'
+  ).trim();
+  const notes = (
+    req.body.notes ||
+    req.body.shippingAddress?.notes ||
+    ''
+  ).trim();
   if (!items || !Array.isArray(items) || items.length === 0) {
     send(res, 400, { success: false, message: 'La commande doit comporter au moins un article.' });
     return;

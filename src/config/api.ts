@@ -17,15 +17,19 @@ if (import.meta.env.PROD && (!rawEnvApi || rawEnvApi.length === 0)) {
 export const API_BASE_URL: string = (rawEnvApi || '/api').replace(/\/+$/, '');
 
 export function getApiBaseUrl(): string {
+  // En production stricte (build déployé sur InfinityFree ou Render)
   if (import.meta.env.PROD) {
     return API_BASE_URL;
   }
 
-  const isLocalhost =
+  // En développement local (localhost, 127.0.0.1 ou réseau local)
+  const isLocalDev =
     typeof window !== 'undefined' &&
-    ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    (['localhost', '127.0.0.1'].includes(window.location.hostname) ||
+      window.location.hostname.startsWith('192.168.') ||
+      window.location.hostname.startsWith('10.'));
 
-  if (isLocalhost) {
+  if (isLocalDev) {
     try {
       const customUrl = window.localStorage?.getItem('cym_api_url');
       if (customUrl && typeof customUrl === 'string' && customUrl.trim().length > 0) {
@@ -33,7 +37,8 @@ export function getApiBaseUrl(): string {
       }
     } catch {}
 
-    return rawEnvApi || '/api';
+    // En local, toujours utiliser le proxy Vite '/api' vers server.js
+    return '/api';
   }
 
   return API_BASE_URL;
