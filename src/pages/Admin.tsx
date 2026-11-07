@@ -46,7 +46,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { formatCurrency } from '../utils/currency';
+import { formatCurrency, formatMoney } from '../utils/currency';
 import { storage } from '../utils/storage';
 import { Admin as AdminApi } from '../services/api';
 import { supabase, isSupabaseConfigured } from '../services/supabase';

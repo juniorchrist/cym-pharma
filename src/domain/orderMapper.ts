@@ -70,8 +70,8 @@ export function mapOrder(raw: any): Order {
     total = Number(raw.total);
   } else if (raw.total_amount !== undefined && raw.total_amount !== null && !isNaN(Number(raw.total_amount))) {
     total = Number(raw.total_amount);
-  } else if (items.length > 0 && items.every((it) => it.unit_price !== null && it.unit_price > 0)) {
-    total = items.reduce((sum, it) => sum + (it.line_total || 0), 0);
+  } else if (items.length > 0 && items.every((it: any) => it.unit_price !== null && it.unit_price > 0)) {
+    total = items.reduce((sum: number, it: any) => sum + (it.line_total || 0), 0);
   }
 
   // Si le statut est pending_quote, le total ne doit pas être affiché comme un montant définitif
