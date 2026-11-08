@@ -12,11 +12,14 @@ import {
   TrendingUp,
   FileCheck,
   CheckCircle2,
+  BarChart3,
+  ClipboardList,
 } from 'lucide-react';
 import {
   InventoryPeriod,
   InventoryCount,
   PeriodWithCounts,
+  MonthlyInventoryReport,
 } from '../../types/inventaire';
 import { InventaireService } from '../../services/inventaire';
 import { useToast } from '../../context/ToastContext';
@@ -27,6 +30,7 @@ interface InventairePeriodeProps {
 
 export const InventairePeriode: React.FC<InventairePeriodeProps> = ({ onOpenImport }) => {
   const { showToast } = useToast();
+  const [subTab, setSubTab] = useState<'bilan' | 'comptage'>('bilan');
   const [periods, setPeriods] = useState<PeriodWithCounts[]>([]);
   const [activePeriod, setActivePeriod] = useState<InventoryPeriod | null>(null);
   const [counts, setCounts] = useState<
@@ -37,6 +41,12 @@ export const InventairePeriode: React.FC<InventairePeriodeProps> = ({ onOpenImpo
   const [filterMode, setFilterMode] = useState<'all' | 'uncounted' | 'counted' | 'variance'>('all');
   const [search, setSearch] = useState('');
 
+  // Bilan Mensuel state
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
+  const [monthlyReport, setMonthlyReport] = useState<any | null>(null);
+  const [loadingReport, setLoadingReport] = useState(false);
+
   // Close period confirmation modal
   const [isCloseModalOpen, setIsCloseModalOpen] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -44,6 +54,19 @@ export const InventairePeriode: React.FC<InventairePeriodeProps> = ({ onOpenImpo
   // Start new period modal
   const [isStartModalOpen, setIsStartModalOpen] = useState(false);
   const [newYearMonth, setNewYearMonth] = useState(new Date().toISOString().slice(0, 7));
+
+  const loadMonthlyReport = useCallback(async (year: number, month: number) => {
+    setLoadingReport(true);
+    const res = await InventaireService.getMonthlyReport(year, month);
+    if (res.success && res.data) {
+      setMonthlyReport(res.data);
+    }
+    setLoadingReport(false);
+  }, []);
+
+  useEffect(() => {
+    loadMonthlyReport(selectedYear, selectedMonth);
+  }, [selectedYear, selectedMonth, loadMonthlyReport]);
 
   const loadPeriods = useCallback(async () => {
     setLoading(true);
@@ -147,8 +170,211 @@ export const InventairePeriode: React.FC<InventairePeriodeProps> = ({ onOpenImpo
   const varianceCount = counts.filter((c) => c.variance !== null && c.variance !== 0).length;
   const progressPercent = totalItems > 0 ? Math.round((countedCount / totalItems) * 100) : 0;
 
+  const handleExportMonthlyCsv = async () => {
+    const url = await InventaireService.exportMonthlyReportCsvUrl(selectedYear, selectedMonth);
+    window.open(url, '_blank');
+  };
+
   return (
     <div className="space-y-6">
+      {/* SÉLECTEUR DE MODE : BILAN D'UTILISATION MENSUEL OU COMPTAGE PHYSIQUE */}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+        <button
+          onClick={() => setSubTab('bilan')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+            subTab === 'bilan'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4" />
+          <span>Bilan d'Utilisation Mensuel</span>
+        </button>
+        <button
+          onClick={() => setSubTab('comptage')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+            subTab === 'comptage'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80'
+          }`}
+        >
+          <ClipboardList className="w-4 h-4" />
+          <span>Comptage Physique &amp; Clôture</span>
+        </button>
+      </div>
+
+      {subTab === 'bilan' ? (
+        /* ═══════════════════════════════════════════════════════════════════
+           SECTION 6 : BILAN D'UTILISATION DU STOCK PAR MOIS
+           ═══════════════════════════════════════════════════════════════════ */
+        <div className="space-y-6">
+          {/* BANNIÈRE & CONTRÔLES DU MOIS */}
+          <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 border border-emerald-100">
+                <BarChart3 className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-slate-900">
+                  Bilan Mensuel des Stocks &amp; Consommation
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Synthèse des flux : Stock initial + Entrées - Sorties + Ajustements = Stock final
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(parseInt(e.target.value, 10))}
+                className="text-xs font-semibold text-slate-700 bg-slate-50 px-3 py-2 rounded-xl border border-slate-200 outline-none cursor-pointer"
+              >
+                {[
+                  'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin',
+                  'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
+                ].map((m, idx) => (
+                  <option key={idx + 1} value={idx + 1}>{m}</option>
+                ))}
+              </select>
+
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
+                className="text-xs font-semibold text-slate-700 bg-slate-50 px-3 py-2 rounded-xl border border-slate-200 outline-none cursor-pointer"
+              >
+                {[2024, 2025, 2026, 2027].map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+
+              <button
+                onClick={() => loadMonthlyReport(selectedYear, selectedMonth)}
+                className="p-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 cursor-pointer"
+                title="Actualiser"
+              >
+                <RefreshCw className={`w-4 h-4 ${loadingReport ? 'animate-spin' : ''}`} />
+              </button>
+
+              <button
+                onClick={handleExportMonthlyCsv}
+                className="flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition cursor-pointer"
+              >
+                <Download className="w-4 h-4 text-emerald-600" />
+                <span>Export CSV</span>
+              </button>
+            </div>
+          </div>
+
+          {/* SYNTHÈSE GLOBALE */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Entrées Totales</span>
+              <div className="text-xl font-bold text-emerald-700 mt-1">
+                +{monthlyReport?.summary?.total_entries ?? 0}
+              </div>
+              <span className="text-[10px] text-slate-500">Achats &amp; réapprovisionnements</span>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Sorties / Consommation</span>
+              <div className="text-xl font-bold text-blue-700 mt-1">
+                -{monthlyReport?.summary?.total_exits ?? 0}
+              </div>
+              <span className="text-[10px] text-slate-500">Commandes livrées &amp; ventes</span>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Ajustements Nets</span>
+              <div className="text-xl font-bold text-amber-700 mt-1">
+                {monthlyReport?.summary?.total_adjustments >= 0 ? '+' : ''}{monthlyReport?.summary?.total_adjustments ?? 0}
+              </div>
+              <span className="text-[10px] text-slate-500">Imports &amp; rectifications</span>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Articles en Mouvement</span>
+              <div className="text-xl font-bold text-slate-900 mt-1">
+                {monthlyReport?.summary?.items_with_movements ?? 0} <span className="text-xs font-normal text-slate-400">/ {monthlyReport?.summary?.total_items ?? 0}</span>
+              </div>
+              <span className="text-[10px] text-slate-500">Articles ayant bougé ce mois</span>
+            </div>
+          </div>
+
+          {/* TABLEAU DES ARTICLES AVEC BILAN */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+              <div className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                Détail par Produit — {monthlyReport?.month_label || 'Mois en cours'}
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50/80 border-b border-slate-200 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
+                  <tr>
+                    <th className="py-3 px-4">Code</th>
+                    <th className="py-3 px-4">Désignation</th>
+                    <th className="py-3 px-4 text-center">Unité</th>
+                    <th className="py-3 px-4 text-center">Stock Initial</th>
+                    <th className="py-3 px-4 text-center text-emerald-600">Entrées (+)</th>
+                    <th className="py-3 px-4 text-center text-blue-600">Sorties (-)</th>
+                    <th className="py-3 px-4 text-center text-amber-600">Ajustements</th>
+                    <th className="py-3 px-4 text-center font-bold">Stock Final</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {loadingReport ? (
+                    Array.from({ length: 4 }).map((_, idx) => (
+                      <tr key={`skel-rep-${idx}`} className="animate-pulse">
+                        <td className="py-3 px-4"><div className="h-4 bg-slate-200 rounded w-16" /></td>
+                        <td className="py-3 px-4"><div className="h-4 bg-slate-200 rounded w-48" /></td>
+                        <td className="py-3 px-4"><div className="h-4 bg-slate-200 rounded w-16 mx-auto" /></td>
+                        <td className="py-3 px-4"><div className="h-4 bg-slate-200 rounded w-12 mx-auto" /></td>
+                        <td className="py-3 px-4"><div className="h-4 bg-slate-200 rounded w-12 mx-auto" /></td>
+                        <td className="py-3 px-4"><div className="h-4 bg-slate-200 rounded w-12 mx-auto" /></td>
+                        <td className="py-3 px-4"><div className="h-4 bg-slate-200 rounded w-12 mx-auto" /></td>
+                        <td className="py-3 px-4"><div className="h-4 bg-slate-200 rounded w-12 mx-auto" /></td>
+                      </tr>
+                    ))
+                  ) : !monthlyReport?.products || monthlyReport.products.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-12 px-4 text-center text-slate-500">
+                        Aucun article dans le catalogue pour cette période.
+                      </td>
+                    </tr>
+                  ) : (
+                    monthlyReport.products.map((p: any) => (
+                      <tr key={p.item_id} className="hover:bg-slate-50/70 transition">
+                        <td className="py-3 px-4 font-mono text-slate-600 font-bold">{p.code}</td>
+                        <td className="py-3 px-4 font-semibold text-slate-900">{p.designation}</td>
+                        <td className="py-3 px-4 text-center text-slate-500">{p.unit_label}</td>
+                        <td className="py-3 px-4 text-center font-mono font-medium text-slate-700">{p.stock_initial}</td>
+                        <td className="py-3 px-4 text-center font-mono font-semibold text-emerald-700">
+                          {p.entries > 0 ? `+${p.entries}` : '0'}
+                        </td>
+                        <td className="py-3 px-4 text-center font-mono font-semibold text-blue-700">
+                          {p.exits > 0 ? `-${p.exits}` : '0'}
+                        </td>
+                        <td className="py-3 px-4 text-center font-mono text-amber-700">
+                          {p.adjustments !== 0 ? (p.adjustments > 0 ? `+${p.adjustments}` : p.adjustments) : '0'}
+                        </td>
+                        <td className="py-3 px-4 text-center font-mono font-bold text-slate-900 bg-slate-50/50">
+                          {p.stock_final}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* ═══════════════════════════════════════════════════════════════════
+           SECTION COMPTAGE PHYSIQUE & CLÔTURE
+           ═══════════════════════════════════════════════════════════════════ */
+        <div className="space-y-6">
       {/* 1. SÉLECTEUR DE PÉRIODE & BANNIÈRE */}
       <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
@@ -516,6 +742,8 @@ export const InventairePeriode: React.FC<InventairePeriodeProps> = ({ onOpenImpo
           </table>
         </div>
       </div>
+      </div>
+      )}
 
       {/* 5. MODALE DE CONFIRMATION DE CLÔTURE DU MOIS */}
       {isCloseModalOpen && activePeriod && (

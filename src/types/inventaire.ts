@@ -13,7 +13,7 @@ export type MovementType =
 
 export type PeriodStatus = 'open' | 'counting' | 'closed';
 export type CountStatus = 'draft' | 'validated' | 'skipped';
-export type ItemStatus = 'in_stock' | 'low_stock' | 'out_of_stock' | 'negative' | 'untracked';
+export type ItemStatus = 'in_stock' | 'low_stock' | 'out_of_stock' | 'negative' | 'invalid' | 'untracked';
 
 export interface InventoryItem {
   id: string;
@@ -34,7 +34,12 @@ export interface StockMovement {
   id: string;
   item_id: string;
   type: MovementType;
+  qty: number;
   quantity: number;
+  qty_before?: number;
+  qty_after?: number;
+  ref_doc?: string | null;
+  note?: string | null;
   movement_date: string;
   reason: string | null;
   order_id: string | null;
@@ -172,6 +177,39 @@ export interface InventoryStats {
   low_stock: number;
   out_of_stock: number;
   negative: number;
-  untracked: number;
+  untracked?: number;
+  invalid_stock?: number;
   open_period: InventoryPeriod | null;
+}
+
+export interface MonthlyProductReport {
+  item_id: string;
+  code: string;
+  designation: string;
+  unit_label: string;
+  min_stock: number | null;
+  stock_initial: number;
+  entries: number;
+  exits: number;
+  adjustments: number;
+  consumption: number;
+  stock_final: number;
+}
+
+export interface MonthlyInventoryReport {
+  year: number;
+  month: number;
+  year_month: string;
+  timezone: string;
+  reliable_from_date: string;
+  summary: {
+    stock_initial: number;
+    entries: number;
+    exits: number;
+    adjustments: number;
+    consumption: number;
+    stock_final: number;
+    is_balanced: boolean;
+  };
+  products: MonthlyProductReport[];
 }

@@ -301,10 +301,10 @@ export const InventaireMouvements: React.FC<InventaireMouvementsProps> = ({ onOp
                       <div className="text-[10px] font-normal text-slate-400">{m.unit_label || 'Unité'}</div>
                     </td>
                     <td className="py-3.5 px-4 whitespace-nowrap">
-                      {getMovementBadge(m.type, m.quantity)}
+                      {getMovementBadge(m.type, (m.qty ?? m.quantity ?? 0))}
                     </td>
                     <td className="py-3.5 px-4 text-slate-600 max-w-xs">
-                      {m.reason || (m.order_id ? `Commande #${m.order_id}` : '—')}
+                      {m.note || m.reason || (m.ref_doc ? `Réf: ${m.ref_doc}` : '—')}
                     </td>
                     <td className="py-3.5 px-4 text-slate-500 whitespace-nowrap">
                       <span className="px-2 py-0.5 rounded-full bg-slate-100 text-[10px] font-semibold text-slate-600">

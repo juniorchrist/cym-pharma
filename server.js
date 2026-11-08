@@ -1076,6 +1076,80 @@ const handleOrderStatusChange = async (req, res) => {
     note: note || null,
     changed_by: adminId,
   });
+
+  // ✅ SORTIE AUTOMATIQUE DE STOCK lors de l'expédition ou livraison de la commande
+  if (status === 'shipped' || status === 'delivered') {
+    try {
+      const orderRef = `CMD-${id}`;
+      // Vérification idempotence : ne pas déduire deux fois si déjà enregistré pour cette commande
+      const { data: existingMvts } = await db
+        .from('stock_movements')
+        .select('id')
+        .eq('ref_doc', orderRef)
+        .limit(1);
+
+      if (!existingMvts || existingMvts.length === 0) {
+        const { data: orderItems } = await db
+          .from('order_items')
+          .select('product_id, reference, name, quantity')
+          .eq('order_id', id);
+
+        const safeAdminUuid = typeof adminId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(adminId) ? adminId : null;
+
+        for (const oi of (orderItems || [])) {
+          const qtyToDeduct = Number(oi.quantity) || 0;
+          if (qtyToDeduct <= 0) continue;
+
+          // Recherche de l'article d'inventaire correspondant par product_id ou par nom/référence
+          let invItem = null;
+          if (oi.product_id) {
+            const { data } = await db
+              .from('inventory_items')
+              .select('*')
+              .eq('product_id', oi.product_id)
+              .eq('is_active', true)
+              .maybeSingle();
+            invItem = data;
+          }
+
+          if (!invItem && oi.name) {
+            const normName = String(oi.name).toUpperCase().replace(/\s+/g, ' ').trim();
+            const { data } = await db
+              .from('inventory_items')
+              .select('*')
+              .ilike('designation_norm', `%${normName.slice(0, 20)}%`)
+              .eq('is_active', true)
+              .limit(1);
+            if (data && data.length > 0) invItem = data[0];
+          }
+
+          if (invItem) {
+            const qtyBefore = Number(invItem.qty_on_hand) || 0;
+            const qtyAfter = qtyBefore - qtyToDeduct;
+            const nowIso = new Date().toISOString();
+
+            await db.from('inventory_items').update({ qty_on_hand: qtyAfter, updated_at: nowIso }).eq('id', invItem.id);
+
+            await db.from('stock_movements').insert({
+              id: 'mvt_ord_' + id + '_' + invItem.id + '_' + Date.now(),
+              item_id: invItem.id,
+              type: 'sale_online',
+              qty: qtyToDeduct,
+              qty_before: qtyBefore,
+              qty_after: qtyAfter,
+              ref_doc: orderRef,
+              note: `Expédition commande #${id} — ${oi.name || oi.reference || 'Article'}`,
+              created_by: safeAdminUuid,
+              created_at: nowIso,
+            });
+          }
+        }
+      }
+    } catch (stockErr) {
+      console.warn('[CYM Inventory] Warning sortie stock automatique:', stockErr.message);
+    }
+  }
+
   send(res, 200, { success: true });
 };
 router.patch('/admin/orders/:id/status', handleOrderStatusChange);

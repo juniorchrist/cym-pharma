@@ -69,9 +69,11 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
           is_negative: isNeg,
           is_duplicate: isDup,
           is_tracked: current > 0,
-          action: isNeg ? 'import_as_zero' : isDup ? 'skip' : 'import',
+          // ✅ CORRECTION : Les négatifs sont signalés mais JAMAIS silencieusement mis à zéro
+          // action 'import' préserve la valeur réelle (y compris négative)
+          action: isDup ? 'skip' : 'import',
           note: isNeg
-            ? 'Stock négatif (' + current + ') détecté dans le classeur'
+            ? 'Stock négatif (' + current + ') conservé tel quel — anomalie à vérifier'
             : isDup
             ? 'Doublon détecté avec une ligne précédente'
             : undefined,
@@ -113,9 +115,10 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
       const safeAdminUuid = isValidUuid(adminId) ? adminId : null;
 
       // 1. Récupération des articles existants pour garantir l'IDEMPOTENCE par designation_norm
+      // ✅ CORRECTION : inclure qty_on_hand pour calculer qty_before/qty_after
       const { data: existingItems, error: exErr } = await db
         .from('inventory_items')
-        .select('id, code, designation_norm');
+        .select('id, code, designation_norm, qty_on_hand');
 
       if (exErr) {
         return send(res, 500, { success: false, message: 'Erreur lecture inventaire: ' + exErr.message });
@@ -149,17 +152,21 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
           continue;
         }
 
-        const finalQty = r.action === 'import_as_zero' ? 0 : Math.max(0, Number(r.stock_current ?? r.stock ?? 0));
-        const isTracked = r.is_tracked !== undefined ? Boolean(r.is_tracked) : true;
+        // ✅ CORRECTION : Préserver les quantités négatives — jamais Math.max(0, ...)
+        const rawQty = Number(r.stock_current ?? r.stock ?? 0);
+        const finalQty = isNaN(rawQty) ? 0 : rawQty;
+        const isTracked = r.is_tracked !== undefined ? Boolean(r.is_tracked) : finalQty > 0;
 
         let itemId;
         let code;
+        let qtyBefore = 0;
         const existing = existingByNorm.get(normDes);
 
         if (existing) {
           // IDEMPOTENCE : Réutiliser l'ID et le code existant
           itemId = existing.id;
           code = existing.code;
+          qtyBefore = Number(existing.qty_on_hand) || 0;
           updatedCount++;
         } else {
           // Nouvel article
@@ -167,8 +174,7 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
           code = 'ART-' + String(artSeq).padStart(4, '0');
           artSeq++;
           createdCount++;
-          // Mettre en cache pour éviter les doublons au sein du même lot
-          existingByNorm.set(normDes, { id: itemId, code, designation_norm: normDes });
+          existingByNorm.set(normDes, { id: itemId, code, designation_norm: normDes, qty_on_hand: finalQty });
         }
 
         itemsToUpsert.push({
@@ -186,19 +192,19 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
           updated_at: nowIso,
         });
 
-        if (finalQty > 0) {
+        // ✅ CORRECTION COLONNES : qty_before, qty_after, ref_doc, note — pas quantity/movement_date/reason/order_id
+        const delta = finalQty - qtyBefore;
+        if (delta !== 0) {
           movementsToInsert.push({
             id: 'mvt_' + itemId + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
             item_id: itemId,
-            type: 'adjustment', // 'adjustment' est toujours accepté par les contraintes check Supabase
-            qty: finalQty,
-            quantity: finalQty,
-            movement_date: movementDate,
-            reason: r.note || 'Import initial Excel',
-            note: r.note || 'Import initial Excel',
-            order_id: null,
-            order_item_id: null,
-            period_id: periodId,
+            type: 'adjustment',
+            qty: Math.abs(delta),
+            qty_before: qtyBefore,
+            qty_after: finalQty,
+            ref_doc: 'IMPORT-EXCEL',
+            note: r.note || (delta > 0 ? `Import: entrée +${delta}` : `Import: ajustement ${delta}`),
+            period_id: periodId || null,
             created_by: safeAdminUuid,
             created_at: nowIso,
           });
@@ -275,22 +281,27 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
 
       for (const item of (items || [])) {
         const isTracked = Boolean(item.is_tracked);
-        const qty = Number(item.qty_on_hand) || 0;
-        const minStock = Number(item.min_stock) || 5;
+        const qtyRaw = item.qty_on_hand;
+        // ✅ CORRECTION : Compter TOUS les articles actifs (tracked ou non) dans les KPI de stock
+        if (qtyRaw == null || qtyRaw === '' || isNaN(Number(qtyRaw))) continue;
+        const qty = Number(qtyRaw);
+        const minStock = item.min_stock != null ? Number(item.min_stock) : null;
 
-        if (!isTracked) {
-          untracked++;
-        } else {
+        if (isTracked) {
           total_tracked++;
-          if (qty < 0) {
-            negative++;
-          } else if (qty === 0) {
-            out_of_stock++;
-          } else if (qty <= minStock) {
-            low_stock++;
-          } else {
-            in_stock++;
-          }
+        } else {
+          untracked++;
+        }
+
+        // Les 4 catégories de stock sont mutuellement exclusives, calculées sur TOUS les articles
+        if (qty < 0) {
+          negative++;
+        } else if (qty === 0) {
+          out_of_stock++;
+        } else if (minStock != null && minStock > 0 && qty <= minStock) {
+          low_stock++;
+        } else {
+          in_stock++;
         }
       }
 
@@ -334,23 +345,25 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
 
       const itemsWithStatus = (allItems || []).map((item) => {
         const isTracked = Boolean(item.is_tracked);
-        const qty = Number(item.qty_on_hand) || 0;
-        const minStock = Number(item.min_stock) || 5;
+        const qty = Number(item.qty_on_hand);
+        const minStock = item.min_stock != null ? Number(item.min_stock) : null;
+        // ✅ CORRECTION : statut basé sur qty pour TOUS les articles — 'untracked' en info secondaire seulement
         let status = 'in_stock';
-        if (!isTracked) {
-          status = 'untracked';
+        if (isNaN(qty)) {
+          status = 'invalid';
         } else if (qty < 0) {
           status = 'negative';
         } else if (qty === 0) {
-          status = 'out_of_stock';
-        } else if (qty <= minStock) {
+          // Un article non suivi avec stock 0 reste 'out_of_stock' pour être compté dans les KPI
+          status = isTracked ? 'out_of_stock' : 'untracked';
+        } else if (minStock != null && minStock > 0 && qty <= minStock) {
           status = 'low_stock';
         }
         return {
           ...item,
           is_tracked: isTracked,
           is_active: Boolean(item.is_active),
-          qty_on_hand: qty,
+          qty_on_hand: isNaN(qty) ? null : qty,
           status,
         };
       });
@@ -465,15 +478,16 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
       const { error: insertErr } = await db.from('inventory_items').insert(newItem);
       if (insertErr) throw insertErr;
 
-      if (startQty > 0) {
+      if (startQty !== 0) {
+        // ✅ CORRECTION COLONNES : qty_before=0, qty_after=startQty, ref_doc, note
         await db.from('stock_movements').insert({
           id: 'mvt_' + itemId + '_init',
           item_id: itemId,
           type: 'adjustment',
-          qty: startQty,
-          quantity: startQty,
-          movement_date: nowIso.split('T')[0],
-          reason: startReason,
+          qty: Math.abs(startQty),
+          qty_before: 0,
+          qty_after: startQty,
+          ref_doc: 'CREATION-ARTICLE',
           note: startReason,
           created_by: safeAdminUuid,
           created_at: nowIso,
@@ -612,39 +626,49 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
         return send(res, 400, { success: false, message: 'La quantité doit être un nombre non nul.' });
       }
 
+      // ✅ CORRECTION TYPE : Mapper les types UI vers les types acceptés par la contrainte Supabase
+      // Types Supabase autorisés : loss, return, sale_online, adjustment, count_correction
+      let dbType = type;
+      if (type === 'purchase' || type === 'opening') dbType = 'adjustment';
+      if (type === 'sale_shop') dbType = 'sale_online';
+
       let delta = 0;
-      if (type === 'purchase' || type === 'return' || type === 'opening') {
-        delta = Math.abs(qty);
-      } else if (type === 'sale_shop' || type === 'sale_online' || type === 'loss') {
-        delta = -Math.abs(qty);
-      } else if (type === 'adjustment' || type === 'count_correction') {
-        delta = qty;
+      if (dbType === 'adjustment' || dbType === 'return') {
+        delta = Math.abs(qty); // entrée positive
+      } else if (dbType === 'sale_online' || dbType === 'loss') {
+        delta = -Math.abs(qty); // sortie négative
+      } else if (dbType === 'count_correction') {
+        delta = qty; // ajustement signé
       }
 
-      const newQty = (Number(item.qty_on_hand) || 0) + delta;
+      const qtyBefore = Number(item.qty_on_hand) || 0;
+      const newQty = qtyBefore + delta;
       const nowIso = new Date().toISOString();
       const safeAdminUuid = isValidUuid(adminId) ? adminId : null;
 
       await db.from('inventory_items').update({ qty_on_hand: newQty, updated_at: nowIso }).eq('id', item_id);
 
       const mvtId = 'mvt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+      // ✅ CORRECTION COLONNES : Utiliser qty/qty_before/qty_after/ref_doc/note — colonnes réelles Supabase
       const newMvt = {
         id: mvtId,
         item_id,
-        type: type === 'purchase' ? 'adjustment' : type, // 'adjustment' garantit la compatibilité contrainte
-        qty: Math.abs(qty),
-        quantity: Math.abs(qty),
-        movement_date: movement_date || nowIso.split('T')[0],
-        reason: reason || null,
+        type: dbType,
+        qty: Math.abs(delta) || Math.abs(qty),
+        qty_before: qtyBefore,
+        qty_after: newQty,
+        ref_doc: order_id || null,
         note: reason || null,
-        order_id: order_id || null,
-        order_item_id: order_item_id || null,
         period_id: period_id || null,
         created_by: safeAdminUuid,
         created_at: nowIso,
       };
 
-      await db.from('stock_movements').insert(newMvt);
+      const { error: mvtErr } = await db.from('stock_movements').insert(newMvt);
+      if (mvtErr) {
+        console.error('[Inventory] Mouvement insert error:', mvtErr.message);
+        return send(res, 500, { success: false, message: 'Erreur insertion mouvement: ' + mvtErr.message });
+      }
 
       send(res, 201, {
         success: true,
@@ -894,9 +918,9 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
               item_id: c.item_id,
               type: 'count_correction',
               qty: Math.abs(variance),
-              quantity: Math.abs(variance),
-              movement_date: nowIso.split('T')[0],
-              reason: `Ajustement inventaire ${ym} (écart: ${variance > 0 ? '+' : ''}${variance})`,
+              qty_before: theo,
+              qty_after: c.counted_qty,
+              ref_doc: 'INVENTAIRE-' + ym,
               note: `Ajustement inventaire ${ym} (écart: ${variance > 0 ? '+' : ''}${variance})`,
               period_id: periodId,
               created_by: safeAdminUuid,
@@ -970,7 +994,141 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
     }
   });
 
-  // ─── 17. CONTRÔLE D'INTÉGRITÉ DU STOCK ──────────────────────────────────────
+  // ─── 17. BILAN MENSUEL DU STOCK (Consommation réelle par mois) ──────────────
+  router.get('/admin/inventory/monthly-report', async (req, res) => {
+    const adminId = await requireAdmin(req, res);
+    if (!adminId) return;
+
+    try {
+      const year = parseInt(req.query.year) || new Date().getFullYear();
+      const month = parseInt(req.query.month) || (new Date().getMonth() + 1);
+
+      const monthStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0)).toISOString();
+      const monthEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999)).toISOString();
+
+      const { data: items } = await db.from('inventory_items').select('*').eq('is_active', true);
+      const { data: mvts, error: mvtErr } = await db.from('stock_movements')
+        .select('*')
+        .gte('created_at', monthStart)
+        .lte('created_at', monthEnd)
+        .order('created_at', { ascending: true });
+
+      if (mvtErr) throw mvtErr;
+
+      const mvtsByItem = new Map();
+      for (const m of (mvts || [])) {
+        if (!mvtsByItem.has(m.item_id)) mvtsByItem.set(m.item_id, []);
+        mvtsByItem.get(m.item_id).push(m);
+      }
+
+      let total_entries = 0;
+      let total_exits = 0;
+      let total_adjustments = 0;
+
+      const products = (items || []).map((item) => {
+        const itemMvts = mvtsByItem.get(item.id) || [];
+        let stock_initial = Number(item.qty_on_hand) || 0;
+        if (itemMvts.length > 0 && itemMvts[0].qty_before != null) {
+          stock_initial = Number(itemMvts[0].qty_before);
+        }
+        let entries = 0, exits = 0, adjustments = 0;
+        for (const m of itemMvts) {
+          const q = Number(m.qty) || 0;
+          if (m.type === 'return') entries += q;
+          else if (m.type === 'sale_online' || m.type === 'loss') exits += q;
+          else if (m.type === 'adjustment' || m.type === 'count_correction') {
+            adjustments += (Number(m.qty_after) - Number(m.qty_before)) || 0;
+          }
+        }
+        total_entries += entries;
+        total_exits += exits;
+        total_adjustments += adjustments;
+        const stock_final = stock_initial + entries - exits + adjustments;
+        return {
+          item_id: item.id,
+          code: item.code,
+          designation: item.designation,
+          unit_label: item.unit_label || 'Unité',
+          stock_initial,
+          entries,
+          exits,
+          adjustments,
+          consumption: exits,
+          stock_final,
+          stock_on_hand: Number(item.qty_on_hand) || 0,
+          movements_count: itemMvts.length,
+        };
+      });
+
+      send(res, 200, {
+        success: true,
+        data: {
+          year, month,
+          month_label: new Date(year, month - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }),
+          period_start: monthStart,
+          period_end: monthEnd,
+          summary: {
+            total_items: products.length,
+            items_with_movements: products.filter((p) => p.movements_count > 0).length,
+            total_entries, total_exits, total_adjustments,
+          },
+          products,
+        },
+      });
+    } catch (err) {
+      send(res, 500, { success: false, message: err.message });
+    }
+  });
+
+  // ─── 18. EXPORT CSV DU BILAN MENSUEL ────────────────────────────────────────
+  router.get('/admin/inventory/monthly-report/export', async (req, res) => {
+    const adminId = await requireAdmin(req, res);
+    if (!adminId) return;
+
+    try {
+      const year = parseInt(req.query.year) || new Date().getFullYear();
+      const month = parseInt(req.query.month) || (new Date().getMonth() + 1);
+      const monthStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0)).toISOString();
+      const monthEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999)).toISOString();
+
+      const { data: items } = await db.from('inventory_items').select('*').eq('is_active', true);
+      const { data: mvts } = await db.from('stock_movements')
+        .select('*').gte('created_at', monthStart).lte('created_at', monthEnd);
+
+      const mvtsByItem = new Map();
+      for (const m of (mvts || [])) {
+        if (!mvtsByItem.has(m.item_id)) mvtsByItem.set(m.item_id, []);
+        mvtsByItem.get(m.item_id).push(m);
+      }
+
+      let csv = '\uFEFFCode;Désignation;Unité;Stock Initial;Entrées;Sorties;Ajustements;Consommation;Stock Final\r\n';
+      for (const item of (items || [])) {
+        const itemMvts = mvtsByItem.get(item.id) || [];
+        let stock_initial = Number(item.qty_on_hand) || 0;
+        if (itemMvts.length > 0 && itemMvts[0].qty_before != null) stock_initial = Number(itemMvts[0].qty_before);
+        let entries = 0, exits = 0, adjustments = 0;
+        for (const m of itemMvts) {
+          const q = Number(m.qty) || 0;
+          if (m.type === 'return') entries += q;
+          else if (m.type === 'sale_online' || m.type === 'loss') exits += q;
+          else if (m.type === 'adjustment' || m.type === 'count_correction') adjustments += (Number(m.qty_after) - Number(m.qty_before)) || 0;
+        }
+        const stock_final = stock_initial + entries - exits + adjustments;
+        const des = (item.designation || '').replace(/;/g, ',');
+        csv += `${item.code};${des};${item.unit_label || 'Unité'};${stock_initial};${entries};${exits};${adjustments};${exits};${stock_final}\r\n`;
+      }
+
+      const label = `${year}-${String(month).padStart(2, '0')}`;
+      res.status(200);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="bilan_mensuel_${label}.csv"`);
+      res.end(csv);
+    } catch (err) {
+      send(res, 500, { success: false, message: err.message });
+    }
+  });
+
+  // ─── 19. CONTRÔLE D'INTÉGRITÉ DU STOCK ──────────────────────────────────────
   router.get('/admin/inventory/integrity-check', async (req, res) => {
     const adminId = await requireAdmin(req, res);
     if (!adminId) return;

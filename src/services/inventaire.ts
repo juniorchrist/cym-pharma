@@ -15,6 +15,7 @@ import {
   ImportCommitResult,
   InventoryStats,
   ItemStatus,
+  MonthlyInventoryReport,
 } from '../types/inventaire';
 import { storage } from '../utils/storage';
 import { buildApiUrl, getApiBaseUrl } from '../config/api';
@@ -227,6 +228,24 @@ export const InventaireService = {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  },
+
+  // Bilan d'utilisation mensuel du stock (Section 6)
+  async getMonthlyReport(year?: number, month?: number): Promise<ApiResponse<MonthlyInventoryReport>> {
+    const params = new URLSearchParams();
+    if (year) params.set('year', String(year));
+    if (month) params.set('month', String(month));
+    const qs = params.toString();
+    return inventoryRequest<MonthlyInventoryReport>('/api/admin/inventory/monthly-report' + (qs ? '?' + qs : ''));
+  },
+
+  async exportMonthlyReportCsvUrl(year?: number, month?: number): Promise<string> {
+    const token = storage.getAuthToken() || 'admin_jwt_local_demo';
+    const params = new URLSearchParams();
+    if (year) params.set('year', String(year));
+    if (month) params.set('month', String(month));
+    params.set('token', token);
+    return buildApiUrl('/api/admin/inventory/monthly-report/export') + '?' + params.toString();
   },
 
   // Controle d'integrite

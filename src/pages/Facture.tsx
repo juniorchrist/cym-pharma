@@ -299,18 +299,18 @@ export const Facture: React.FC = () => {
               )}
             </div>
 
-            <div className="border-t pt-2.5 sm:border-t-0 sm:pt-0 sm:border-l sm:pl-4 print:border-l print:border-t-0 print:pl-4 border-slate-200 space-y-1.5 text-[11px]">
-              <div className="flex justify-between items-center gap-2">
+            <div className="border-t pt-2.5 sm:border-t-0 sm:pt-0 sm:border-l sm:pl-4 print:border-l print:border-t-0 print:pl-4 border-slate-200 space-y-2 text-[11px]">
+              <div className="flex flex-wrap sm:flex-nowrap justify-between items-baseline gap-1 sm:gap-2">
                 <span className="text-slate-500 shrink-0">Réf. Commande :</span>
-                <span className="font-bold text-slate-900 font-ref text-right">{orderNumber}</span>
+                <span className="font-bold text-slate-900 font-mono text-right break-all">{orderNumber}</span>
               </div>
-              <div className="flex justify-between items-center gap-2">
+              <div className="flex flex-wrap sm:flex-nowrap justify-between items-baseline gap-1 sm:gap-2">
                 <span className="text-slate-500 shrink-0">Date commande :</span>
-                <span className="font-medium text-slate-800 text-right">{formattedOrderDateTime}</span>
+                <span className="font-medium text-slate-800 text-right whitespace-nowrap">{formattedOrderDateTime}</span>
               </div>
-              <div className="flex justify-between items-center gap-2">
+              <div className="flex flex-wrap sm:flex-nowrap justify-between items-baseline gap-1 sm:gap-2">
                 <span className="text-slate-500 shrink-0">Échéance :</span>
-                <span className="font-semibold text-emerald-700 text-right">À réception de facture</span>
+                <span className="font-semibold text-emerald-700 text-right whitespace-nowrap">À réception de facture</span>
               </div>
             </div>
           </div>
@@ -416,8 +416,8 @@ export const Facture: React.FC = () => {
             </div>
           ) : (
             /* ── AFFICHAGE STANDARD 1 COLONNE (POUR LES COMMANDES ORDINAIRES <= 12 ARTICLES) ── */
-            <div className="border border-slate-200 rounded-xl overflow-hidden print:overflow-visible my-2 shrink-0">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="border border-slate-200 rounded-xl overflow-x-auto print:overflow-visible my-2 shrink-0">
+              <table className="w-full text-left text-xs border-collapse min-w-[320px] sm:min-w-0">
                 <thead>
                   <tr className="bg-slate-900 text-white uppercase text-[9px] sm:text-[10px] tracking-wider whitespace-nowrap">
                     <th className="py-2 px-2 sm:px-3 font-semibold text-center w-7 sm:w-10">N°</th>
@@ -425,7 +425,7 @@ export const Facture: React.FC = () => {
                     <th className="hidden sm:table-cell print:table-cell py-2 px-2 sm:px-3 font-semibold text-center w-20 sm:w-24">Cond.</th>
                     <th className="py-2 px-1.5 sm:px-3 font-semibold text-center w-9 sm:w-14">Qté</th>
                     <th className="hidden sm:table-cell print:table-cell py-2 px-2 sm:px-3 font-semibold text-right w-20 sm:w-28">P.U. HT</th>
-                    <th className="py-2 px-2 sm:px-3 font-semibold text-right w-20 sm:w-32">Total HT</th>
+                    <th className="py-2 px-2 sm:px-3 font-semibold text-right w-20 sm:w-32 whitespace-nowrap">Total HT</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -438,10 +438,10 @@ export const Facture: React.FC = () => {
                       <tr key={idx} className={idx % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
                         <td className="py-2 px-2 sm:px-3 text-center text-slate-400 font-bold text-[10px] sm:text-[11px] whitespace-nowrap">{idx + 1}</td>
                         <td className="py-2 px-2 sm:px-3 font-medium text-slate-900">
-                          <div>{item.name || item.product_name}</div>
-                          <div className="sm:hidden print:hidden text-[9px] text-slate-400 font-normal mt-0.5">
+                          <div className="font-semibold text-slate-900">{item.name || item.product_name}</div>
+                          <div className="sm:hidden print:hidden text-[9.5px] text-slate-500 font-normal mt-0.5">
                             {item.conditionnement || item.unit || 'Boîte'}
-                            {unitPrice > 0 && ` • P.U: ${unitPrice.toLocaleString('fr-FR')} F`}
+                            {unitPrice > 0 && ` • P.U: ${unitPrice.toLocaleString('fr-FR')} FCFA`}
                           </div>
                         </td>
                         <td className="hidden sm:table-cell print:table-cell py-2 px-2 sm:px-3 text-center text-slate-500 text-[11px] whitespace-nowrap">
@@ -452,7 +452,7 @@ export const Facture: React.FC = () => {
                           {unitPrice > 0 ? unitPrice.toLocaleString('fr-FR') : '—'}
                         </td>
                         <td className="py-2 px-2 sm:px-3 text-right font-bold text-slate-900 whitespace-nowrap font-mono">
-                          {lineTotal > 0 ? lineTotal.toLocaleString('fr-FR') : '—'}
+                          {lineTotal > 0 ? `${lineTotal.toLocaleString('fr-FR')} F` : '—'}
                         </td>
                       </tr>
                     );

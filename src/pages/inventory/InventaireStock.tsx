@@ -40,7 +40,7 @@ export const InventaireStock: React.FC<InventaireStockProps> = ({ onOpenImport, 
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<ItemStatus | 'all'>('all');
-  const [trackedOnly, setTrackedOnly] = useState<boolean>(true);
+  const [trackedOnly, setTrackedOnly] = useState<boolean>(false);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
@@ -252,8 +252,8 @@ export const InventaireStock: React.FC<InventaireStockProps> = ({ onOpenImport, 
 
   return (
     <div className="space-y-6">
-      {/* 1. CARTOUCHES STATISTIQUES */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+      {/* 1. CARTOUCHES STATISTIQUES (5 indicateurs mutuellement exclusifs calculés sur TOUS les produits) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <div
           onClick={() => { setStatusFilter('all'); setPage(1); }}
           className={`cursor-pointer p-4 rounded-2xl border transition shadow-sm ${
@@ -322,20 +322,6 @@ export const InventaireStock: React.FC<InventaireStockProps> = ({ onOpenImport, 
           </div>
           <div className="text-2xl font-bold text-purple-700">{stats?.negative ?? 0}</div>
           <div className="text-[10px] mt-1 text-slate-500">Anomalies classeur</div>
-        </div>
-
-        <div
-          onClick={() => { setStatusFilter('untracked'); setTrackedOnly(false); setPage(1); }}
-          className={`cursor-pointer p-4 rounded-2xl border transition shadow-sm ${
-            statusFilter === 'untracked' ? 'bg-slate-600 text-white border-slate-600' : 'bg-white hover:border-slate-300 text-slate-800 border-slate-200/80'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Hors suivi</span>
-            <SlidersHorizontal className="w-4 h-4 text-slate-400" />
-          </div>
-          <div className="text-2xl font-bold text-slate-600">{stats?.untracked ?? '—'}</div>
-          <div className="text-[10px] mt-1 text-slate-500">Articles non tracés</div>
         </div>
       </div>
 

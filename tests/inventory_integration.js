@@ -26,15 +26,16 @@ export async function runIntegrationTests(port = 4000) {
   console.log('CYM PHARMA — SUITE DE TESTS D\'INTÉGRATION DU MODULE INVENTAIRE & STOCKS');
   console.log('=============================================================================');
 
-  // 1. Création du classeur synthétique de test
+  // 1. Création du classeur synthétique de test avec suffixe d'exécution pour isolation
+  const runId = Math.random().toString(36).slice(2, 6).toUpperCase();
   const wb = XLSX.utils.book_new();
   const wsData = [
     ['DESIGNATION', 'STOCK INITIAL', 'STOCK EN COURS'],
-    ['COMPRESSES STERILES 10X10 B/100', 100, 80],       // Valide
-    ['GANTS D\'EXAMEN LATEX T7 B/100', 50, -10],        // Négatif
-    ['SERINGUE 5ML 3P B/100', 200, 150],                // Valide
-    ['COMPRESSES STERILES 10X10 B/100', 100, 80],       // Doublon de la ligne 2
-    ['ALCOOL CHIRURGICAL 70 1L', 30, 25],               // Valide
+    [`COMPRESSES STERILES ${runId} 10X10 B/100`, 100, 80],       // Valide
+    [`GANTS D'EXAMEN LATEX ${runId} T7 B/100`, 50, -10],        // Négatif
+    [`SERINGUE 5ML 3P ${runId} B/100`, 200, 150],                // Valide
+    [`COMPRESSES STERILES ${runId} 10X10 B/100`, 100, 80],       // Doublon de la ligne 2
+    [`ALCOOL CHIRURGICAL 70 ${runId} 1L`, 30, 25],               // Valide
     ['', 0, 0],                                         // Ligne vide (ignorée)
   ];
   const ws = XLSX.utils.aoa_to_sheet(wsData);
