@@ -26,6 +26,20 @@ export default defineConfig(() => {
           target: backendTarget,
           changeOrigin: true,
           secure: false,
+          configure: (proxy) => {
+            proxy.on('error', (_err, _req, res) => {
+              if (res && 'writeHead' in res && !(res as any).headersSent) {
+                (res as any).writeHead(502, { 'Content-Type': 'application/json' });
+                res.end(
+                  JSON.stringify({
+                    success: false,
+                    message:
+                      'Le serveur backend local (port 4000) n\'est pas démarré. Lancez "npm run dev" pour démarrer le frontend et l\'API backend ensemble.',
+                  })
+                );
+              }
+            });
+          },
         },
       },
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
@@ -40,6 +54,20 @@ export default defineConfig(() => {
           target: backendTarget,
           changeOrigin: true,
           secure: false,
+          configure: (proxy) => {
+            proxy.on('error', (_err, _req, res) => {
+              if (res && 'writeHead' in res && !(res as any).headersSent) {
+                (res as any).writeHead(502, { 'Content-Type': 'application/json' });
+                res.end(
+                  JSON.stringify({
+                    success: false,
+                    message:
+                      'Le serveur backend local (port 4000) n\'est pas démarré. Lancez "npm run dev" pour démarrer l\'application complète.',
+                  })
+                );
+              }
+            });
+          },
         },
       },
     },

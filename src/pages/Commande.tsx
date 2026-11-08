@@ -20,6 +20,7 @@ import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useToast } from '../context/ToastContext';
 import { Orders } from '../services/api';
+import { buildApiUrl } from '../config/api';
 import { notifyOrderWhatsApp } from '../services/whatsapp';
 import { storage } from '../utils/storage';
 import { ALL_PRODUCTS } from '../data/catalog';

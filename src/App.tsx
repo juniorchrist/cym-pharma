@@ -23,6 +23,17 @@ import { Contact } from './pages/Contact';
 import { ProtectedRoute } from './routes/ProtectedRoute';
 import { AdminRoute } from './routes/AdminRoute';
 import { PublicOnlyRoute } from './routes/PublicOnlyRoute';
+import { buildApiUrl } from './config/api';
+
+function BackendPrewarm() {
+  useEffect(() => {
+    try {
+      const pingUrl = buildApiUrl('/health');
+      fetch(pingUrl, { cache: 'no-store' }).catch(() => {});
+    } catch {}
+  }, []);
+  return null;
+}
 
 
 function GlobalPresenceHeartbeat() {
@@ -67,6 +78,7 @@ export default function App() {
       <AuthProvider>
         <CartProvider>
           <BrowserRouter>
+            <BackendPrewarm />
             <GlobalPresenceHeartbeat />
             <Routes>
               {/* Public routes */}

@@ -33,7 +33,8 @@ export { API_BASE_URL };
 // Helper pour requêtes HTTP vers le backend
 async function request<T = unknown>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  retriesLeft: number = 2
 ): Promise<ApiResponse<T>> {
   const headers = new Headers(options.headers || {});
 
@@ -86,6 +87,19 @@ async function request<T = unknown>(
       };
     }
 
+    // Détection immédiate du démarrage à froid Render ou proxy (HTTP 502 Bad Gateway / 503 / 504)
+    if ([502, 503, 504].includes(response.status)) {
+      if (retriesLeft > 0) {
+        console.warn(`[CYM API] Serveur temporairement indisponible (HTTP ${response.status}). Réveil Render en cours, nouvelle tentative dans 3s (${retriesLeft} restante(s))...`);
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        return request<T>(endpoint, options, retriesLeft - 1);
+      }
+      return {
+        success: false,
+        message: 'Le serveur CYM Pharma redémarre (réveil du service cloud). Veuillez patienter quelques secondes et cliquer à nouveau sur « Valider ma commande ».',
+      };
+    }
+
     const contentType = response.headers.get('content-type') || '';
     const isJson = contentType.includes('application/json');
 
@@ -114,10 +128,19 @@ async function request<T = unknown>(
     return json as ApiResponse<T>;
   } catch (error: any) {
     if (error?.name === 'AbortError') {
+      if (retriesLeft > 0) {
+        console.warn(`[CYM API] Délai de 25s dépassé. Nouvelle tentative automatique (${retriesLeft} restante(s))...`);
+        return request<T>(endpoint, options, retriesLeft - 1);
+      }
       return {
         success: false,
-        message: 'Le serveur démarre, réessayez dans quelques instants (délai de 25s dépassé).',
+        message: 'Le serveur démarre (délai de 25s dépassé). Veuillez patienter quelques instants et cliquer à nouveau.',
       };
+    }
+    if (retriesLeft > 0 && (error?.message?.includes('Failed to fetch') || error?.message?.includes('NetworkError'))) {
+      console.warn(`[CYM API] Échec réseau temporaire vers ${url}. Nouvelle tentative dans 3s...`);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      return request<T>(endpoint, options, retriesLeft - 1);
     }
     console.warn(`[CYM API] Échec réseau vers ${url}:`, error);
     return {
