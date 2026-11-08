@@ -265,13 +265,10 @@ export const Facture: React.FC = () => {
 
             <div className="w-full sm:w-auto print:w-auto flex sm:flex-col print:flex-col items-center sm:items-end print:items-end justify-between sm:justify-start gap-1">
               <span className="inline-block px-2.5 py-0.5 bg-slate-900 text-white text-[10px] font-extrabold uppercase tracking-widest rounded whitespace-nowrap">
-                FACTURE B2B
+                FACTURE
               </span>
               <p className="font-bold text-xs text-slate-900 mt-0.5 whitespace-nowrap">
                 N° {invoiceNumber}
-              </p>
-              <p className="text-[10px] text-slate-500 whitespace-nowrap">
-                Date : {formattedDate}
               </p>
             </div>
           </div>

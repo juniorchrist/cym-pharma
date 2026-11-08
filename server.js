@@ -505,6 +505,14 @@ router.post('/orders', async (req, res) => {
     }
     if (!result?.order) { send(res, 500, { success: false, message: 'Commande non enregistrée.' }); return; }
 
+    const orderId = result.order.id || result.order.order_number;
+
+    // ─── DÉDUCTION IMMÉDIATE DU STOCK À LA CRÉATION DE COMMANDE ───────────────
+    // Idempotente : ref_doc = ORDER-<orderId>, donc une relance ne déduira pas deux fois.
+    deductStockForOrder(orderId, sanitizedItems).catch((e) =>
+      console.warn('[CYM Inventory] Déduction stock non-bloquante:', e?.message)
+    );
+
     // Alerte WhatsApp asynchrone non-bloquante
     notifyNewOrder(result.order).catch((e) => console.warn('[CYM WhatsApp Alert]', e?.message));
 
@@ -513,6 +521,87 @@ router.post('/orders', async (req, res) => {
     send(res, 500, { success: false, message: err.message || 'Erreur interne.' });
   }
 });
+
+// ─── HELPER : Déduction de stock pour une commande (idempotent) ───────────────
+// ref_doc = ORDER-<orderId>. Si ce ref_doc existe déjà dans stock_movements,
+// la déduction est ignorée (commande déjà traitée).
+async function deductStockForOrder(orderId, orderItems) {
+  const orderRef = `ORDER-${orderId}`;
+  const nowIso = new Date().toISOString();
+
+  // Vérification idempotence : ne déduire qu'une seule fois par commande
+  const { data: existingMvts } = await db
+    .from('stock_movements')
+    .select('id')
+    .eq('ref_doc', orderRef)
+    .limit(1);
+
+  if (existingMvts && existingMvts.length > 0) {
+    console.log(`[CYM Inventory] Commande ${orderId} déjà déduite du stock — ignoré.`);
+    return;
+  }
+
+  for (const oi of (orderItems || [])) {
+    const qtyToDeduct = Number(oi.quantity) || 0;
+    if (qtyToDeduct <= 0) continue;
+
+    // Recherche article d'inventaire : 1. par product_id, 2. par désignation normalisée
+    let invItem = null;
+    if (oi.productId || oi.product_id) {
+      const pid = oi.productId || oi.product_id;
+      const { data } = await db
+        .from('inventory_items')
+        .select('*')
+        .eq('product_id', pid)
+        .eq('is_active', true)
+        .maybeSingle();
+      invItem = data;
+    }
+
+    if (!invItem && oi.name) {
+      const normName = String(oi.name).toUpperCase().replace(/\s+/g, ' ').trim();
+      const { data } = await db
+        .from('inventory_items')
+        .select('*')
+        .ilike('designation_norm', `%${normName.slice(0, 30)}%`)
+        .eq('is_active', true)
+        .limit(1);
+      if (data && data.length > 0) invItem = data[0];
+    }
+
+    if (!invItem) {
+      console.warn(`[CYM Inventory] Article introuvable en stock pour commande ${orderId}: ${oi.name}`);
+      continue;
+    }
+
+    const qtyBefore = Number(invItem.qty_on_hand) || 0;
+    const qtyAfter = qtyBefore - qtyToDeduct;
+
+    // Mise à jour du stock
+    await db
+      .from('inventory_items')
+      .update({ qty_on_hand: qtyAfter, updated_at: nowIso })
+      .eq('id', invItem.id);
+
+    // Enregistrement du mouvement de sortie
+    await db.from('stock_movements').insert({
+      id: `mvt_sale_${orderId}_${invItem.id}_${Date.now()}`,
+      item_id: invItem.id,
+      type: 'sale_online',
+      qty: qtyToDeduct,
+      qty_before: qtyBefore,
+      qty_after: qtyAfter,
+      ref_doc: orderRef,
+      note: `Commande ${orderId} — ${oi.name || oi.reference || 'Article'}`,
+      created_by: null,
+      created_at: nowIso,
+    });
+
+    console.log(
+      `[CYM Inventory] Stock déduit: ${invItem.designation} ${qtyBefore} → ${qtyAfter} (commande ${orderId})`
+    );
+  }
+}
 
 router.get('/orders', async (req, res) => {
   const auth = await requireUser(req, res);
@@ -1078,17 +1167,30 @@ const handleOrderStatusChange = async (req, res) => {
   });
 
   // ✅ SORTIE AUTOMATIQUE DE STOCK lors de l'expédition ou livraison de la commande
+  // ✅ IDEMPOTENCE RENFORCÉE : vérifie à la fois ORDER-<id> (créé à la commande) et CMD-<id> (ancien format)
   if (status === 'shipped' || status === 'delivered') {
     try {
-      const orderRef = `CMD-${id}`;
-      // Vérification idempotence : ne pas déduire deux fois si déjà enregistré pour cette commande
-      const { data: existingMvts } = await db
+      const orderRefNew = `ORDER-${id}`;
+      const orderRefOld = `CMD-${id}`;
+
+      // Si le stock a déjà été déduit à la création de commande (ORDER-<id>), on ne refait rien
+      const { data: existingNew } = await db
         .from('stock_movements')
         .select('id')
-        .eq('ref_doc', orderRef)
+        .eq('ref_doc', orderRefNew)
         .limit(1);
 
-      if (!existingMvts || existingMvts.length === 0) {
+      // Fallback : vérifier aussi l'ancien format CMD-<id>
+      const { data: existingOld } = await db
+        .from('stock_movements')
+        .select('id')
+        .eq('ref_doc', orderRefOld)
+        .limit(1);
+
+      const alreadyDeducted = (existingNew && existingNew.length > 0) || (existingOld && existingOld.length > 0);
+
+      if (!alreadyDeducted) {
+        // Stock pas encore déduit (commande créée avant le déploiement de la déduction immédiate)
         const { data: orderItems } = await db
           .from('order_items')
           .select('product_id, reference, name, quantity')
@@ -1117,7 +1219,7 @@ const handleOrderStatusChange = async (req, res) => {
             const { data } = await db
               .from('inventory_items')
               .select('*')
-              .ilike('designation_norm', `%${normName.slice(0, 20)}%`)
+              .ilike('designation_norm', `%${normName.slice(0, 30)}%`)
               .eq('is_active', true)
               .limit(1);
             if (data && data.length > 0) invItem = data[0];
@@ -1131,19 +1233,21 @@ const handleOrderStatusChange = async (req, res) => {
             await db.from('inventory_items').update({ qty_on_hand: qtyAfter, updated_at: nowIso }).eq('id', invItem.id);
 
             await db.from('stock_movements').insert({
-              id: 'mvt_ord_' + id + '_' + invItem.id + '_' + Date.now(),
+              id: 'mvt_ship_' + id + '_' + invItem.id + '_' + Date.now(),
               item_id: invItem.id,
               type: 'sale_online',
               qty: qtyToDeduct,
               qty_before: qtyBefore,
               qty_after: qtyAfter,
-              ref_doc: orderRef,
+              ref_doc: orderRefOld,
               note: `Expédition commande #${id} — ${oi.name || oi.reference || 'Article'}`,
               created_by: safeAdminUuid,
               created_at: nowIso,
             });
           }
         }
+      } else {
+        console.log(`[CYM Inventory] Stock déjà déduit pour commande ${id} — pas de double déduction.`);
       }
     } catch (stockErr) {
       console.warn('[CYM Inventory] Warning sortie stock automatique:', stockErr.message);
