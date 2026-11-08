@@ -140,7 +140,10 @@ export const Connexion: React.FC = () => {
 
       if (res.success) {
         setSuccess(true);
-        const redirect = storage.getRedirectAfterLogin() || '/dashboard';
+        const storedRedirect = storage.getRedirectAfterLogin();
+        const isAdmin = identifier.trim().toLowerCase().includes('admin@');
+        const defaultRedirect = isAdmin ? '/admin' : '/dashboard';
+        const redirect = storedRedirect || defaultRedirect;
         storage.clearRedirectAfterLogin();
         setTimeout(() => {
           navigate(redirect);

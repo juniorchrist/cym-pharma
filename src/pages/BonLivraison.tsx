@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Printer, Download } from 'lucide-react';
 import { storage } from '../utils/storage';
 import { Orders } from '../services/api';
 import { Order } from '../types';
+import { mapOrder } from '../domain/orderMapper';
 
 export const BonLivraison: React.FC = () => {
+  const { id: routeId } = useParams<{ id?: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const orderId = searchParams.get('id') || searchParams.get('order_id');
+  const orderId = routeId || searchParams.get('id') || searchParams.get('order_id');
 
   const [order, setOrder] = useState<Order>(() => {
     // 1. Check session storage cache
@@ -41,9 +43,14 @@ export const BonLivraison: React.FC = () => {
     if (orderId) {
       (async () => {
         try {
-          const res = await Orders.showPhp(orderId);
-          if (res.order) {
-            setOrder(res.order);
+          const res = await Orders.get(orderId);
+          if (res.success && res.data?.order) {
+            setOrder(mapOrder(res.data.order));
+          } else {
+            const phpRes = await Orders.showPhp(orderId);
+            if (phpRes.order) {
+              setOrder(mapOrder(phpRes.order));
+            }
           }
         } catch {
           // Keep cached or default

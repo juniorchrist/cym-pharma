@@ -34,15 +34,21 @@ async function start() {
 
     if (ready) {
       console.log('✅ [CYM Dev] Serveur API local opérationnel sur http://localhost:4000');
+      process.env.VITE_BACKEND_URL = 'http://localhost:4000';
+    } else {
+      console.warn('⚠️ [CYM Dev] Le serveur local sur port 4000 ne répond pas — bascule automatique sur Render (https://cym-pharma.onrender.com)');
+      process.env.VITE_BACKEND_URL = 'https://cym-pharma.onrender.com';
     }
   } else {
     console.log('✅ [CYM Dev] Serveur API local déjà actif sur http://localhost:4000');
+    process.env.VITE_BACKEND_URL = 'http://localhost:4000';
   }
 
-  console.log('🌐 [CYM Dev] Démarrage de Vite sur http://localhost:3000 (proxy /api actif)...');
+  console.log(`🌐 [CYM Dev] Démarrage de Vite sur http://localhost:3000 (proxy /api vers ${process.env.VITE_BACKEND_URL})...`);
   const viteProcess = spawn('node', ['node_modules/vite/bin/vite.js', '--port=3000', '--host=0.0.0.0', ...process.argv.slice(2)], {
     stdio: 'inherit',
     shell: true,
+    env: { ...process.env, VITE_BACKEND_URL: process.env.VITE_BACKEND_URL },
   });
 
   const cleanup = () => {

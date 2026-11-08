@@ -936,14 +936,24 @@ export const Dashboard: React.FC = () => {
                                   );
                                 }
                                 return (
-                                  <Link
-                                    to={`/facture?id=${ord.orderNumber || ord.id}`}
-                                    target="_blank"
-                                    className="font-semibold text-[var(--primary)] hover:underline inline-flex items-center gap-1"
-                                  >
-                                    <FileText className="w-3 h-3" />
-                                    <span>Facture A4</span>
-                                  </Link>
+                                  <div className="flex items-center gap-2">
+                                    <Link
+                                      to={`/facture?id=${ord.orderNumber || ord.id}`}
+                                      target="_blank"
+                                      className="font-semibold text-[var(--primary)] hover:underline inline-flex items-center gap-1"
+                                    >
+                                      <FileText className="w-3 h-3" />
+                                      <span>Facture A4</span>
+                                    </Link>
+                                    <Link
+                                      to={`/bon-livraison?id=${ord.orderNumber || ord.id}`}
+                                      target="_blank"
+                                      className="font-semibold text-slate-600 hover:text-slate-900 hover:underline inline-flex items-center gap-1"
+                                    >
+                                      <Truck className="w-3 h-3" />
+                                      <span>BL</span>
+                                    </Link>
+                                  </div>
                                 );
                               })()}
                               <button

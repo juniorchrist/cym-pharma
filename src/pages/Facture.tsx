@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { useSearchParams, useNavigate, Link } from 'react-router-dom';
+import { useSearchParams, useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Printer, Download, CheckCircle, ShieldCheck, FileText, Layers, Clock, AlertTriangle } from 'lucide-react';
 import { Orders } from '../services/api';
 import { Order, OrderItem } from '../types';
@@ -8,9 +8,10 @@ import { isPendingQuote } from '../domain/orderStatus';
 import { mapOrder } from '../domain/orderMapper';
 
 export const Facture: React.FC = () => {
+  const { id: routeId } = useParams<{ id?: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const orderId = searchParams.get('id') || searchParams.get('order_id');
+  const orderId = routeId || searchParams.get('id') || searchParams.get('order_id');
 
   // Toujours initialiser à null pour forcer le chargement de l'état serveur frais
   // Évite l'affichage d'un instantané périmé (sans prix) conservé dans sessionStorage

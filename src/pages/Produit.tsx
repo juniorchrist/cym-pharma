@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import {
   ChevronRight,
   ShieldCheck,
@@ -21,8 +21,9 @@ import { getProductById, ALL_PRODUCTS } from '../data/catalog';
 import { Product } from '../types';
 
 export const Produit: React.FC = () => {
+  const { id: routeId } = useParams<{ id?: string }>();
   const [searchParams] = useSearchParams();
-  const idParam = searchParams.get('id') || searchParams.get('p') || 'prod-001';
+  const idParam = routeId || searchParams.get('id') || searchParams.get('p') || 'prod-001';
   const { add, openDrawer } = useCart();
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();

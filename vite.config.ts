@@ -1,16 +1,37 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import http from 'http';
 import { defineConfig } from 'vite';
 
 /**
- * vite.config.ts — CYM Pharma (Frontend seulement)
- * Le backend cymBackend.ts est déprécié en développement local et remplacé par
- * le serveur Express de production (src/server/index.ts) déployé sur Render.
- * En développement, utilisez Supabase directement via VITE_SUPABASE_URL.
+ * Vérifie si le serveur Express local tourne sur le port 4000.
+ * S'il n'est pas actif, le proxy bascule automatiquement sur le backend Render en ligne.
  */
-export default defineConfig(() => {
-  const backendTarget = process.env.VITE_BACKEND_URL || 'http://localhost:4000';
+function checkLocalServer(port = 4000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.get(`http://127.0.0.1:${port}/api/health`, (res) => {
+      resolve(res.statusCode === 200);
+    });
+    req.on('error', () => resolve(false));
+    req.setTimeout(500, () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
+/**
+ * vite.config.ts — CYM Pharma
+ * Supporte le développement local (server.js sur port 4000) ET la bascule
+ * automatique sur Render (https://cym-pharma.onrender.com) en l'absence de serveur local.
+ */
+export default defineConfig(async () => {
+  let backendTarget = process.env.VITE_BACKEND_URL;
+  if (!backendTarget) {
+    const isLocalActive = await checkLocalServer(4000);
+    backendTarget = isLocalActive ? 'http://localhost:4000' : 'https://cym-pharma.onrender.com';
+  }
 
   return {
     base: '/',
@@ -34,7 +55,7 @@ export default defineConfig(() => {
                   JSON.stringify({
                     success: false,
                     message:
-                      'Le serveur backend local (port 4000) n\'est pas démarré. Lancez "npm run dev" pour démarrer le frontend et l\'API backend ensemble.',
+                      'Connexion au serveur temporairement indisponible. Nouvelle tentative en cours...',
                   })
                 );
               }
@@ -62,7 +83,7 @@ export default defineConfig(() => {
                   JSON.stringify({
                     success: false,
                     message:
-                      'Le serveur backend local (port 4000) n\'est pas démarré. Lancez "npm run dev" pour démarrer l\'application complète.',
+                      'Connexion au serveur temporairement indisponible.',
                   })
                 );
               }
