@@ -86,7 +86,12 @@ export const InventaireImport: React.FC<InventaireImportProps> = ({ onImportComp
       }
 
       setLoadingStep('Analyse des lignes et des colonnes...');
-      const sheetName = wb.SheetNames[0];
+      // Priorité à la feuille 'Stocks Octobre 2026' ou toute feuille contenant 'Stock'
+      let sheetName = wb.SheetNames[0];
+      const stockSheet = wb.SheetNames.find((s) => /stock|octobre/i.test(s));
+      if (stockSheet) {
+        sheetName = stockSheet;
+      }
       const sheet = wb.Sheets[sheetName];
       const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
 
@@ -94,7 +99,7 @@ export const InventaireImport: React.FC<InventaireImportProps> = ({ onImportComp
         throw new Error('Le fichier sélectionné est vide.');
       }
 
-      // Détection automatique de la première ligne de données
+      // Détection automatique de la première ligne de données (à partir de la ligne 6 ou après l'en-tête)
       let startIndex = 0;
       for (let i = 0; i < Math.min(10, rawData.length); i++) {
         const row = rawData[i];
@@ -154,6 +159,8 @@ export const InventaireImport: React.FC<InventaireImportProps> = ({ onImportComp
           else if (rawDes.includes('1L')) unitLabel = 'Flacon 1L';
         }
 
+        // ✅ RÈGLE FONDAMENTALE : Les stocks négatifs sont préservés fidèlement (action: 'import')
+        // Les doublons sont marqués 'skip' mais peuvent être réactivés
         previewRows.push({
           row_index: startIndex + idx + 1,
           designation_raw: rawDes,
@@ -163,10 +170,9 @@ export const InventaireImport: React.FC<InventaireImportProps> = ({ onImportComp
           stock_current: current,
           is_negative: isNeg,
           is_duplicate: isDup,
-          is_tracked: current > 0,
-          action: isNeg ? 'import_as_zero' : isDup ? 'skip' : 'import',
+          action: isDup ? 'skip' : 'import',
           note: isNeg
-            ? `Stock négatif (${current}) détecté dans le classeur`
+            ? `Stock négatif (${current}) conservé fidèlement pour vérification`
             : isDup
             ? 'Doublon détecté avec une ligne précédente'
             : undefined,
@@ -224,25 +230,6 @@ export const InventaireImport: React.FC<InventaireImportProps> = ({ onImportComp
       const nextRows = [...prev.rows];
       nextRows[idx] = { ...nextRows[idx], action };
       return { ...prev, rows: nextRows };
-    });
-  };
-
-  const updateRowTracked = (idx: number, is_tracked: boolean) => {
-    if (!preview) return;
-    setPreview((prev) => {
-      if (!prev) return prev;
-      const nextRows = [...prev.rows];
-      nextRows[idx] = { ...nextRows[idx], is_tracked };
-      return { ...prev, rows: nextRows };
-    });
-  };
-
-  // Batch actions
-  const handleBatchAllTracked = (val: boolean) => {
-    if (!preview) return;
-    setPreview({
-      ...preview,
-      rows: preview.rows.map((r) => ({ ...r, is_tracked: val })),
     });
   };
 
@@ -568,13 +555,6 @@ export const InventaireImport: React.FC<InventaireImportProps> = ({ onImportComp
                   Exclure les doublons
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => handleBatchAllTracked(true)}
-                className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition cursor-pointer"
-              >
-                Tout marquer « Suivi »
-              </button>
             </div>
           </div>
 
@@ -605,7 +585,6 @@ export const InventaireImport: React.FC<InventaireImportProps> = ({ onImportComp
                     <th className="py-3 px-4">Conditionnement</th>
                     <th className="py-3 px-4 text-center">Stock Initial (B)</th>
                     <th className="py-3 px-4 text-center">Stock En Cours (C)</th>
-                    <th className="py-3 px-4 text-center">Suivi</th>
                     <th className="py-3 px-4 text-center">Action</th>
                     <th className="py-3 px-4">Observation</th>
                   </tr>
@@ -656,21 +635,12 @@ export const InventaireImport: React.FC<InventaireImportProps> = ({ onImportComp
                           )}
                         </td>
                         <td className="py-3 px-4 text-center">
-                          <input
-                            type="checkbox"
-                            checked={r.is_tracked}
-                            onChange={(e) => updateRowTracked(originalIdx, e.target.checked)}
-                            className="accent-emerald-600 w-4 h-4 rounded cursor-pointer"
-                          />
-                        </td>
-                        <td className="py-3 px-4 text-center">
                           <select
                             value={r.action}
                             onChange={(e) => updateRowAction(originalIdx, e.target.value as any)}
                             className="text-xs font-semibold rounded-lg px-2 py-1 border border-slate-200 outline-none bg-white cursor-pointer"
                           >
                             <option value="import">Importer</option>
-                            <option value="import_as_zero">Importer à 0</option>
                             <option value="skip">Ignorer</option>
                           </select>
                         </td>

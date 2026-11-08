@@ -165,6 +165,28 @@ export async function runIntegrationTests(port = 4000) {
   });
   console.log('  -> TEST 6 RÉUSSI ✓');
 
+  console.log('\n[TEST 7] Bilan Mensuel des flux & consommations');
+  const resMonthly = await request({
+    hostname: '127.0.0.1',
+    port,
+    path: '/api/admin/inventory/monthly-report?year=2026&month=11',
+    method: 'GET',
+    headers: {
+      'Authorization': 'Bearer admin_jwt_local_demo',
+    },
+  });
+  console.log(`  Statut HTTP reçu : ${resMonthly.status} (attendu : 200)`);
+  const mRep = resMonthly.data?.data;
+  console.log(`  Bilan ${mRep?.month_label} :`);
+  console.log(`    - Produits concernés   : ${mRep?.summary?.total_products}`);
+  console.log(`    - Entrées totales      : +${mRep?.summary?.total_entries}`);
+  console.log(`    - Sorties totales      : -${mRep?.summary?.total_exits}`);
+  console.log(`    - Ajustements nets     : ${mRep?.summary?.total_adjustments}`);
+  console.log(`    - Ruptures             : ${mRep?.summary?.count_ruptures}`);
+  console.log(`    - Négatifs             : ${mRep?.summary?.count_negatifs}`);
+  if (resMonthly.status !== 200) throw new Error('Échec TEST 7 : 200 attendu');
+  console.log('  -> TEST 7 RÉUSSI ✓');
+
   console.log('\n=============================================================================');
   console.log('TOUS LES TESTS D\'INTÉGRATION DU MODULE INVENTAIRE SONT VALIDÉS AVEC SUCCÈS !');
   console.log('=============================================================================');

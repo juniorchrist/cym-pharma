@@ -13,7 +13,7 @@ import { InventairePeriode } from './InventairePeriode';
 import { InventaireHistorique } from './InventaireHistorique';
 import { InventaireImport } from './InventaireImport';
 
-export type InventoryTab = 'stock' | 'movements' | 'period' | 'history' | 'import';
+export type InventoryTab = 'stock' | 'period' | 'import';
 
 export const InventaireIndex: React.FC = () => {
   const [activeTab, setActiveTab] = useState<InventoryTab>('stock');
@@ -33,12 +33,12 @@ export const InventaireIndex: React.FC = () => {
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Supervision du catalogue stock, suivi des flux, inventaires physiques mensuels et import classeur sans doublon.
+            Consultez les stocks de tous les produits, suivez le bilan mensuel et importez votre fichier Excel.
           </p>
         </div>
       </div>
 
-      {/* 2. ONGLETS SOUS LE TITRE — PLEINE LARGEUR (SANS DÉFILEMENT HORIZONTAL SUR DESKTOP) */}
+      {/* 2. ONGLETS SOUS LE TITRE — 3 RUBRIQUES VISIBLES UNIQUEMENT */}
       <div className="w-full bg-white p-1.5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center gap-1.5 overflow-x-auto md:overflow-visible">
         <button
           type="button"
@@ -55,19 +55,6 @@ export const InventaireIndex: React.FC = () => {
 
         <button
           type="button"
-          onClick={() => setActiveTab('movements')}
-          className={`flex-1 min-w-[130px] md:min-w-0 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
-            activeTab === 'movements'
-              ? 'bg-slate-900 text-white shadow-sm ring-1 ring-slate-900'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
-          }`}
-        >
-          <ArrowLeftRight className={`w-4 h-4 ${activeTab === 'movements' ? 'text-blue-400' : 'text-slate-500'}`} />
-          <span>Mouvements</span>
-        </button>
-
-        <button
-          type="button"
           onClick={() => setActiveTab('period')}
           className={`flex-1 min-w-[130px] md:min-w-0 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
             activeTab === 'period'
@@ -76,20 +63,7 @@ export const InventaireIndex: React.FC = () => {
           }`}
         >
           <ClipboardList className={`w-4 h-4 ${activeTab === 'period' ? 'text-amber-400' : 'text-slate-500'}`} />
-          <span>Inventaire Mensuel</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('history')}
-          className={`flex-1 min-w-[130px] md:min-w-0 flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold transition cursor-pointer whitespace-nowrap ${
-            activeTab === 'history'
-              ? 'bg-slate-900 text-white shadow-sm ring-1 ring-slate-900'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
-          }`}
-        >
-          <History className={`w-4 h-4 ${activeTab === 'history' ? 'text-purple-400' : 'text-slate-500'}`} />
-          <span>Historique</span>
+          <span>Bilan mensuel</span>
         </button>
 
         <button
@@ -102,7 +76,7 @@ export const InventaireIndex: React.FC = () => {
           }`}
         >
           <FileSpreadsheet className={`w-4 h-4 ${activeTab === 'import' ? 'text-teal-400' : 'text-slate-500'}`} />
-          <span>Import Classeur</span>
+          <span>Importer un fichier Excel</span>
         </button>
       </div>
 
@@ -110,12 +84,9 @@ export const InventaireIndex: React.FC = () => {
       {activeTab === 'stock' && (
         <InventaireStock
           onOpenImport={() => setActiveTab('import')}
-          onOpenMovements={() => setActiveTab('movements')}
         />
       )}
-      {activeTab === 'movements' && <InventaireMouvements onOpenImport={() => setActiveTab('import')} />}
       {activeTab === 'period' && <InventairePeriode onOpenImport={() => setActiveTab('import')} />}
-      {activeTab === 'history' && <InventaireHistorique onOpenImport={() => setActiveTab('import')} />}
       {activeTab === 'import' && (
         <InventaireImport onImportComplete={() => setActiveTab('stock')} />
       )}

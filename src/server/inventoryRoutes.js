@@ -115,14 +115,28 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
       const safeAdminUuid = isValidUuid(adminId) ? adminId : null;
 
       // 1. Récupération des articles existants pour garantir l'IDEMPOTENCE par designation_norm
-      // ✅ CORRECTION : inclure qty_on_hand pour calculer qty_before/qty_after
+      // ✅ CORRECTION : inclure qty_on_hand et product_id pour préserver et enrichir les relations
       const { data: existingItems, error: exErr } = await db
         .from('inventory_items')
-        .select('id, code, designation_norm, qty_on_hand');
+        .select('id, code, designation_norm, qty_on_hand, product_id');
 
       if (exErr) {
         return send(res, 500, { success: false, message: 'Erreur lecture inventaire: ' + exErr.message });
       }
+
+      // 1b. Récupération des produits du catalogue pour liaison stricte (products.id -> inventory_items.product_id)
+      const { data: allProds } = await db
+        .from('products')
+        .select('id, reference, name')
+        .eq('is_active', true);
+
+      const prodById = new Map((allProds || []).map((p) => [p.id, p]));
+      const prodByRef = new Map(
+        (allProds || []).filter((p) => p.reference).map((p) => [String(p.reference).toUpperCase().trim(), p])
+      );
+      const prodByName = new Map(
+        (allProds || []).map((p) => [String(p.name).toUpperCase().replace(/\s+/g, ' ').trim(), p])
+      );
 
       const existingByNorm = new Map(
         (existingItems || []).map((it) => [it.designation_norm, it])
@@ -160,6 +174,8 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
         let itemId;
         let code;
         let qtyBefore = 0;
+        let linkedProductId = r.product_id || null;
+
         const existing = existingByNorm.get(normDes);
 
         if (existing) {
@@ -167,6 +183,7 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
           itemId = existing.id;
           code = existing.code;
           qtyBefore = Number(existing.qty_on_hand) || 0;
+          linkedProductId = linkedProductId || existing.product_id || null;
           updatedCount++;
         } else {
           // Nouvel article
@@ -174,8 +191,25 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
           code = 'ART-' + String(artSeq).padStart(4, '0');
           artSeq++;
           createdCount++;
-          existingByNorm.set(normDes, { id: itemId, code, designation_norm: normDes, qty_on_hand: finalQty });
         }
+
+        // Correspondance produit prioritaire : 1. products.id, 2. products.reference, 3. désignation exacte
+        if (!linkedProductId) {
+          const rowRef = String(r.code || r.reference || '').toUpperCase().trim();
+          if (rowRef && prodByRef.has(rowRef)) {
+            linkedProductId = prodByRef.get(rowRef).id;
+          } else if (prodByName.has(normDes)) {
+            linkedProductId = prodByName.get(normDes).id;
+          }
+        }
+
+        existingByNorm.set(normDes, {
+          id: itemId,
+          code,
+          designation_norm: normDes,
+          qty_on_hand: finalQty,
+          product_id: linkedProductId,
+        });
 
         itemsToUpsert.push({
           id: itemId,
@@ -183,7 +217,7 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
           designation: rawDes,
           designation_norm: normDes,
           unit_label: r.unit_label || r.unit || 'Unité',
-          product_id: null,
+          product_id: linkedProductId,
           min_stock: isTracked ? 5 : null,
           is_tracked: isTracked,
           qty_on_hand: finalQty,
@@ -251,11 +285,22 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
   });
 
   // ─── 3. STATISTIQUES GLOBALES DE L'INVENTAIRE ───────────────────────────────
+  // ✅ CORRECTION FONDAMENTALE : Basé sur la totalité des produits actifs du site (table products)
+  // + jointure logique avec inventory_items (source de vérité stock).
   router.get('/admin/inventory/stats', async (req, res) => {
     const adminId = await requireAdmin(req, res);
     if (!adminId) return;
 
     try {
+      // 1. Tous les produits actifs du catalogue CYM Pharma
+      const { data: products, error: pErr } = await db
+        .from('products')
+        .select('id, reference, name, is_active')
+        .eq('is_active', true);
+
+      if (pErr) throw pErr;
+
+      // 2. Tous les articles d'inventaire
       const { data: items, error: itErr } = await db
         .from('inventory_items')
         .select('*')
@@ -272,28 +317,36 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
 
       const openPeriod = periods?.[0] || null;
 
+      // Indexation par product_id et par code/reference
+      const invByProductId = new Map();
+      const invByRef = new Map();
+      for (const it of (items || [])) {
+        if (it.product_id) invByProductId.set(it.product_id, it);
+        if (it.code) invByRef.set(it.code, it);
+      }
+
       let in_stock = 0;
       let low_stock = 0;
       let out_of_stock = 0;
       let negative = 0;
-      let untracked = 0;
-      let total_tracked = 0;
+      let unrecorded = 0;
 
-      for (const item of (items || [])) {
-        const isTracked = Boolean(item.is_tracked);
-        const qtyRaw = item.qty_on_hand;
-        // ✅ CORRECTION : Compter TOUS les articles actifs (tracked ou non) dans les KPI de stock
-        if (qtyRaw == null || qtyRaw === '' || isNaN(Number(qtyRaw))) continue;
-        const qty = Number(qtyRaw);
-        const minStock = item.min_stock != null ? Number(item.min_stock) : null;
+      const matchedInvIds = new Set();
 
-        if (isTracked) {
-          total_tracked++;
-        } else {
-          untracked++;
+      for (const prod of (products || [])) {
+        const inv = invByProductId.get(prod.id) || (prod.reference ? invByRef.get(prod.reference) : null);
+        if (inv) matchedInvIds.add(inv.id);
+
+        const qtyRaw = inv?.qty_on_hand;
+        if (qtyRaw === null || qtyRaw === undefined || qtyRaw === '' || isNaN(Number(qtyRaw))) {
+          unrecorded++;
+          continue;
         }
 
-        // Les 4 catégories de stock sont mutuellement exclusives, calculées sur TOUS les articles
+        const qty = Number(qtyRaw);
+        const minStock = inv?.min_stock != null ? Number(inv.min_stock) : null;
+
+        // Catégories mutuellement exclusives sur tous les produits
         if (qty < 0) {
           negative++;
         } else if (qty === 0) {
@@ -305,16 +358,34 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
         }
       }
 
+      // Intégrer les éventuels articles d'inventaire orphelins
+      for (const it of (items || [])) {
+        if (!matchedInvIds.has(it.id)) {
+          const qtyRaw = it.qty_on_hand;
+          if (qtyRaw === null || qtyRaw === undefined || isNaN(Number(qtyRaw))) {
+            unrecorded++;
+          } else {
+            const qty = Number(qtyRaw);
+            const minStock = it.min_stock != null ? Number(it.min_stock) : null;
+            if (qty < 0) negative++;
+            else if (qty === 0) out_of_stock++;
+            else if (minStock != null && minStock > 0 && qty <= minStock) low_stock++;
+            else in_stock++;
+          }
+        }
+      }
+
+      const total_items = (products || []).length + (items || []).filter((i) => !matchedInvIds.has(i.id)).length;
+
       send(res, 200, {
         success: true,
         data: {
-          total_tracked,
+          total_items,
           in_stock,
           low_stock,
           out_of_stock,
           negative,
-          untracked,
-          total_items: (items || []).length,
+          unrecorded,
           open_period: openPeriod,
         },
       });
@@ -323,7 +394,8 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
     }
   });
 
-  // ─── 4. LISTE DES ARTICLES AVEC RECHERCHE ET FILTRES ───────────────────────
+  // ─── 4. LISTE DES ARTICLES DU CATALOGUE DE STOCK AVEC RECHERCHE ET FILTRES ─
+  // ✅ TOUS les produits du site apparaissent, avec ou sans quantité déjà enregistrée.
   router.get('/admin/inventory/items', async (req, res) => {
     const adminId = await requireAdmin(req, res);
     if (!adminId) return;
@@ -331,61 +403,122 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
     try {
       const search = (req.query.search || '').toLowerCase().trim();
       const statusFilter = req.query.status || 'all';
-      const isTrackedFilter = req.query.is_tracked;
       const page = Math.max(1, parseInt(req.query.page || '1', 10));
       const limit = Math.max(1, Math.min(200, parseInt(req.query.limit || '50', 10)));
 
-      const { data: allItems, error } = await db
-        .from('inventory_items')
+      // 1. Tous les produits actifs du site
+      const { data: allProducts, error: pErr } = await db
+        .from('products')
         .select('*')
         .eq('is_active', true)
-        .order('code', { ascending: true });
+        .order('name', { ascending: true });
 
-      if (error) throw error;
+      if (pErr) throw pErr;
 
-      const itemsWithStatus = (allItems || []).map((item) => {
-        const isTracked = Boolean(item.is_tracked);
-        const qty = Number(item.qty_on_hand);
-        const minStock = item.min_stock != null ? Number(item.min_stock) : null;
-        // ✅ CORRECTION : statut basé sur qty pour TOUS les articles — 'untracked' en info secondaire seulement
-        let status = 'in_stock';
-        if (isNaN(qty)) {
-          status = 'invalid';
-        } else if (qty < 0) {
-          status = 'negative';
-        } else if (qty === 0) {
-          // Un article non suivi avec stock 0 reste 'out_of_stock' pour être compté dans les KPI
-          status = isTracked ? 'out_of_stock' : 'untracked';
-        } else if (minStock != null && minStock > 0 && qty <= minStock) {
-          status = 'low_stock';
+      // 2. Informations de stock dans inventory_items
+      const { data: allInvItems, error: iErr } = await db
+        .from('inventory_items')
+        .select('*')
+        .eq('is_active', true);
+
+      if (iErr) throw iErr;
+
+      const invByProductId = new Map();
+      const invByRef = new Map();
+      for (const it of (allInvItems || [])) {
+        if (it.product_id) invByProductId.set(it.product_id, it);
+        if (it.code) invByRef.set(it.code, it);
+      }
+
+      const matchedInvIds = new Set();
+
+      // 3. Jointure logique : Chaque produit du site apparaît avec son stock ou "non renseigné"
+      const unifiedList = (allProducts || []).map((p) => {
+        const inv = invByProductId.get(p.id) || (p.reference ? invByRef.get(p.reference) : null);
+        if (inv) matchedInvIds.add(inv.id);
+
+        const rawQty = inv?.qty_on_hand;
+        const minStock = inv?.min_stock != null ? Number(inv.min_stock) : null;
+        let qty = null;
+        let status = 'unrecorded'; // Stock non renseigné
+
+        if (rawQty !== null && rawQty !== undefined && rawQty !== '' && !isNaN(Number(rawQty))) {
+          qty = Number(rawQty);
+          if (qty < 0) {
+            status = 'negative';
+          } else if (qty === 0) {
+            status = 'out_of_stock';
+          } else if (minStock != null && minStock > 0 && qty <= minStock) {
+            status = 'low_stock';
+          } else {
+            status = 'in_stock';
+          }
         }
+
         return {
-          ...item,
-          is_tracked: isTracked,
-          is_active: Boolean(item.is_active),
-          qty_on_hand: isNaN(qty) ? null : qty,
+          id: inv?.id || `prod_${p.id}`,
+          product_id: p.id,
+          code: p.reference || inv?.code || '—',
+          designation: p.name,
+          category: p.category || '—',
+          unit_label: p.conditionnement || p.unit || inv?.unit_label || 'Unité',
+          min_stock: minStock,
+          qty_on_hand: qty,
           status,
+          has_stock_record: Boolean(inv),
+          is_active: true,
+          created_at: p.created_at,
+          updated_at: inv?.updated_at || p.updated_at,
         };
       });
 
-      let filtered = itemsWithStatus;
+      // Inclusion des articles d'inventaire orphelins (ex: articles importés n'ayant pas encore de fiche produit)
+      for (const it of (allInvItems || [])) {
+        if (!matchedInvIds.has(it.id)) {
+          const rawQty = it.qty_on_hand;
+          const minStock = it.min_stock != null ? Number(it.min_stock) : null;
+          let qty = null;
+          let status = 'unrecorded';
+          if (rawQty !== null && rawQty !== undefined && !isNaN(Number(rawQty))) {
+            qty = Number(rawQty);
+            if (qty < 0) status = 'negative';
+            else if (qty === 0) status = 'out_of_stock';
+            else if (minStock != null && minStock > 0 && qty <= minStock) status = 'low_stock';
+            else status = 'in_stock';
+          }
+          unifiedList.push({
+            id: it.id,
+            product_id: it.product_id || null,
+            code: it.code,
+            designation: it.designation,
+            category: 'Inventaire',
+            unit_label: it.unit_label || 'Unité',
+            min_stock: minStock,
+            qty_on_hand: qty,
+            status,
+            has_stock_record: true,
+            is_active: true,
+            created_at: it.created_at,
+            updated_at: it.updated_at,
+          });
+        }
+      }
+
+      // 4. Filtrage et Recherche
+      let filtered = unifiedList;
 
       if (search) {
         filtered = filtered.filter(
           (i) =>
             i.designation?.toLowerCase().includes(search) ||
             i.code?.toLowerCase().includes(search) ||
+            i.category?.toLowerCase().includes(search) ||
             i.unit_label?.toLowerCase().includes(search)
         );
       }
 
       if (statusFilter && statusFilter !== 'all') {
         filtered = filtered.filter((i) => i.status === statusFilter);
-      }
-
-      if (isTrackedFilter !== null && isTrackedFilter !== undefined && isTrackedFilter !== '') {
-        const wantTracked = isTrackedFilter === 'true';
-        filtered = filtered.filter((i) => i.is_tracked === wantTracked);
       }
 
       const total = filtered.length;
@@ -1021,9 +1154,15 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
         mvtsByItem.get(m.item_id).push(m);
       }
 
+      let total_stock_initial = 0;
       let total_entries = 0;
       let total_exits = 0;
       let total_adjustments = 0;
+      let total_stock_final = 0;
+      let count_ruptures = 0;
+      let count_negatifs = 0;
+
+      const hasMovements = (mvts || []).length > 0;
 
       const products = (items || []).map((item) => {
         const itemMvts = mvtsByItem.get(item.id) || [];
@@ -1043,7 +1182,14 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
         total_entries += entries;
         total_exits += exits;
         total_adjustments += adjustments;
+        total_stock_initial += stock_initial;
+
         const stock_final = stock_initial + entries - exits + adjustments;
+        total_stock_final += stock_final;
+
+        if (stock_final === 0) count_ruptures++;
+        if (stock_final < 0) count_negatifs++;
+
         return {
           item_id: item.id,
           code: item.code,
@@ -1068,9 +1214,16 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
           period_start: monthStart,
           period_end: monthEnd,
           summary: {
-            total_items: products.length,
+            total_products: products.length,
             items_with_movements: products.filter((p) => p.movements_count > 0).length,
-            total_entries, total_exits, total_adjustments,
+            total_stock_initial,
+            total_entries,
+            total_exits,
+            total_adjustments,
+            total_stock_final,
+            count_ruptures,
+            count_negatifs,
+            has_data: hasMovements,
           },
           products,
         },

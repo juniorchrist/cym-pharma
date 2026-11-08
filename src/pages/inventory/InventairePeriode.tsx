@@ -266,38 +266,70 @@ export const InventairePeriode: React.FC<InventairePeriodeProps> = ({ onOpenImpo
             </div>
           </div>
 
-          {/* SYNTHÈSE GLOBALE */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Entrées Totales</span>
-              <div className="text-xl font-bold text-emerald-700 mt-1">
+          {/* 8 CARTOUCHES DE SYNTHÈSE GLOBALE MENSUELLE (CONFORME SECTION 7) */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
+            <div className="bg-white p-3 rounded-2xl border border-slate-200/80 shadow-xs">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Articles</span>
+              <div className="text-lg font-bold text-slate-900 mt-0.5">
+                {monthlyReport?.summary?.total_products ?? 0}
+              </div>
+              <span className="text-[9px] text-slate-400">Total concernés</span>
+            </div>
+
+            <div className="bg-white p-3 rounded-2xl border border-slate-200/80 shadow-xs">
+              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Stock Initial</span>
+              <div className="text-lg font-bold text-slate-700 mt-0.5 font-mono">
+                {monthlyReport?.summary?.total_stock_initial ?? 0}
+              </div>
+              <span className="text-[9px] text-slate-400">Début de mois</span>
+            </div>
+
+            <div className="bg-white p-3 rounded-2xl border border-emerald-100 bg-emerald-50/20 shadow-xs">
+              <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-wider block">Entrées (+)</span>
+              <div className="text-lg font-bold text-emerald-700 mt-0.5 font-mono">
                 +{monthlyReport?.summary?.total_entries ?? 0}
               </div>
-              <span className="text-[10px] text-slate-500">Achats &amp; réapprovisionnements</span>
+              <span className="text-[9px] text-emerald-600">Achats / Réappro</span>
             </div>
 
-            <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Sorties / Consommation</span>
-              <div className="text-xl font-bold text-blue-700 mt-1">
+            <div className="bg-white p-3 rounded-2xl border border-blue-100 bg-blue-50/20 shadow-xs">
+              <span className="text-[9px] font-bold text-blue-700 uppercase tracking-wider block">Sorties (-)</span>
+              <div className="text-lg font-bold text-blue-700 mt-0.5 font-mono">
                 -{monthlyReport?.summary?.total_exits ?? 0}
               </div>
-              <span className="text-[10px] text-slate-500">Commandes livrées &amp; ventes</span>
+              <span className="text-[9px] text-blue-600">Commandes / Ventes</span>
             </div>
 
-            <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Ajustements Nets</span>
-              <div className="text-xl font-bold text-amber-700 mt-1">
-                {monthlyReport?.summary?.total_adjustments >= 0 ? '+' : ''}{monthlyReport?.summary?.total_adjustments ?? 0}
+            <div className="bg-white p-3 rounded-2xl border border-amber-100 bg-amber-50/20 shadow-xs">
+              <span className="text-[9px] font-bold text-amber-700 uppercase tracking-wider block">Ajustements</span>
+              <div className="text-lg font-bold text-amber-700 mt-0.5 font-mono">
+                {(monthlyReport?.summary?.total_adjustments ?? 0) >= 0 ? '+' : ''}{monthlyReport?.summary?.total_adjustments ?? 0}
               </div>
-              <span className="text-[10px] text-slate-500">Imports &amp; rectifications</span>
+              <span className="text-[9px] text-amber-600">Rectifications</span>
             </div>
 
-            <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Articles en Mouvement</span>
-              <div className="text-xl font-bold text-slate-900 mt-1">
-                {monthlyReport?.summary?.items_with_movements ?? 0} <span className="text-xs font-normal text-slate-400">/ {monthlyReport?.summary?.total_items ?? 0}</span>
+            <div className="bg-white p-3 rounded-2xl border border-slate-900 bg-slate-900 text-white shadow-xs">
+              <span className="text-[9px] font-bold text-slate-300 uppercase tracking-wider block">Stock Final</span>
+              <div className="text-lg font-bold text-white mt-0.5 font-mono">
+                {monthlyReport?.summary?.total_stock_final ?? 0}
               </div>
-              <span className="text-[10px] text-slate-500">Articles ayant bougé ce mois</span>
+              <span className="text-[9px] text-slate-300">Fin de mois</span>
+            </div>
+
+            <div className="bg-white p-3 rounded-2xl border border-red-100 bg-red-50/20 shadow-xs">
+              <span className="text-[9px] font-bold text-red-700 uppercase tracking-wider block">Ruptures</span>
+              <div className="text-lg font-bold text-red-700 mt-0.5">
+                {monthlyReport?.summary?.count_ruptures ?? 0}
+              </div>
+              <span className="text-[9px] text-red-600">Stock = 0</span>
+            </div>
+
+            <div className="bg-white p-3 rounded-2xl border border-purple-100 bg-purple-50/20 shadow-xs">
+              <span className="text-[9px] font-bold text-purple-700 uppercase tracking-wider block">Négatifs</span>
+              <div className="text-lg font-bold text-purple-700 mt-0.5">
+                {monthlyReport?.summary?.count_negatifs ?? 0}
+              </div>
+              <span className="text-[9px] text-purple-600">Stock &lt; 0</span>
             </div>
           </div>
 
@@ -339,8 +371,16 @@ export const InventairePeriode: React.FC<InventairePeriodeProps> = ({ onOpenImpo
                     ))
                   ) : !monthlyReport?.products || monthlyReport.products.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="py-12 px-4 text-center text-slate-500">
-                        Aucun article dans le catalogue pour cette période.
+                      <td colSpan={8} className="py-16 px-4 text-center">
+                        <div className="max-w-md mx-auto space-y-2 text-slate-500">
+                          <BarChart3 className="w-10 h-10 text-slate-300 mx-auto" />
+                          <p className="font-bold text-slate-800 text-sm">
+                            Aucun mouvement historique pour {monthlyReport?.month_label || 'cette période'}
+                          </p>
+                          <p className="text-xs text-slate-400 leading-relaxed">
+                            Aucun flux n'a été enregistré pour ce mois. Les bilans sont calculés strictement à partir des mouvements réels (achats, ventes, ajustements et imports).
+                          </p>
+                        </div>
                       </td>
                     </tr>
                   ) : (

@@ -13,7 +13,14 @@ export type MovementType =
 
 export type PeriodStatus = 'open' | 'counting' | 'closed';
 export type CountStatus = 'draft' | 'validated' | 'skipped';
-export type ItemStatus = 'in_stock' | 'low_stock' | 'out_of_stock' | 'negative' | 'invalid' | 'untracked';
+export type ItemStatus =
+  | 'in_stock'
+  | 'low_stock'
+  | 'out_of_stock'
+  | 'negative'
+  | 'unrecorded'
+  | 'invalid'
+  | 'untracked';
 
 export interface InventoryItem {
   id: string;
@@ -127,7 +134,10 @@ export interface ImportPreviewRow {
   is_negative: boolean;
   is_duplicate: boolean;
   duplicate_of?: string;
-  is_tracked: boolean;
+  matched_product_id?: string | null;
+  matched_product_name?: string | null;
+  matched_product_ref?: string | null;
+  is_tracked?: boolean;
   action: 'import' | 'skip' | 'import_as_zero';
   note?: string;
 }
@@ -138,6 +148,8 @@ export interface ImportPreviewResult {
   duplicates: number;
   negative: number;
   zero_stock: number;
+  exact_matches?: number;
+  new_products?: number;
   ignored?: number;
   rows: ImportPreviewRow[];
 }
@@ -156,8 +168,22 @@ export interface ImportCommitPayload {
   movement_date: string;
 }
 
-export interface InventoryItemWithStatus extends InventoryItem {
+export interface InventoryItemWithStatus {
+  id: string;
+  product_id?: string | null;
+  code: string;
+  designation: string;
+  designation_norm?: string;
+  category?: string;
+  unit_label: string;
+  min_stock: number | null;
+  qty_on_hand: number | null;
   status: ItemStatus;
+  has_stock_record?: boolean;
+  is_tracked?: boolean;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface MovementWithItem extends StockMovement {
@@ -172,14 +198,16 @@ export interface PeriodWithCounts extends InventoryPeriod {
 }
 
 export interface InventoryStats {
-  total_tracked: number;
+  total_items: number;
   in_stock: number;
   low_stock: number;
   out_of_stock: number;
   negative: number;
+  unrecorded: number;
+  total_tracked?: number;
   untracked?: number;
   invalid_stock?: number;
-  open_period: InventoryPeriod | null;
+  open_period?: InventoryPeriod | null;
 }
 
 export interface MonthlyProductReport {
