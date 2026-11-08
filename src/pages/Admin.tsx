@@ -1565,8 +1565,15 @@ export const Admin: React.FC = () => {
                             <td className="py-3.5 font-semibold text-slate-800 max-w-[160px] truncate">
                               {ord.establishment_name}
                             </td>
-                            <td className="py-3.5 text-slate-500">
-                              {ord.created_at ? new Date(ord.created_at).toLocaleDateString('fr-FR') : ''}
+                            <td className="py-3.5 text-slate-500 whitespace-nowrap">
+                              {ord.created_at ? (
+                                <>
+                                  <span>{new Date(ord.created_at).toLocaleDateString('fr-FR')}</span>
+                                  <span className="text-[11px] text-slate-400 block">
+                                    à {new Date(ord.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </>
+                              ) : ''}
                             </td>
                             <td className="py-3.5 text-center font-bold text-slate-700">
                               {ord.item_count || ord.items?.length || 1}
@@ -1625,7 +1632,9 @@ export const Admin: React.FC = () => {
                               {ord.establishment_name}
                             </p>
                             <p className="text-[11px] text-slate-500 mt-0.5">
-                              {ord.created_at ? new Date(ord.created_at).toLocaleDateString('fr-FR') : ''} • {count} article{count > 1 ? 's' : ''}
+                              {ord.created_at
+                                ? `${new Date(ord.created_at).toLocaleDateString('fr-FR')} à ${new Date(ord.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+                                : ''} • {count} article{count > 1 ? 's' : ''}
                             </p>
                           </div>
                           <span className={`status-pill ${stInfo.pillClass} shrink-0`}>
@@ -1971,8 +1980,15 @@ export const Admin: React.FC = () => {
                             <td className="py-3.5 font-mono font-bold text-[#155E95]">
                               {o.order_number || o.orderNumber || o.id}
                             </td>
-                            <td className="py-3.5 text-slate-500">
-                              {o.created_at ? new Date(o.created_at).toLocaleDateString('fr-FR') : ''}
+                            <td className="py-3.5 text-slate-500 whitespace-nowrap">
+                              {o.created_at ? (
+                                <>
+                                  <span>{new Date(o.created_at).toLocaleDateString('fr-FR')}</span>
+                                  <span className="text-[11px] text-slate-400 block">
+                                    à {new Date(o.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </>
+                              ) : ''}
                             </td>
                             <td className="py-3.5 font-bold text-slate-800 max-w-[160px] truncate">
                               {o.establishment_name}
@@ -2063,7 +2079,9 @@ export const Admin: React.FC = () => {
                               {o.establishment_name}
                             </p>
                             <p className="text-[11px] text-slate-500 mt-0.5">
-                              {o.created_at ? new Date(o.created_at).toLocaleDateString('fr-FR') : ''} • {o.shipping_city || 'Abidjan'} • {count} article{count > 1 ? 's' : ''}
+                              {o.created_at
+                                ? `${new Date(o.created_at).toLocaleDateString('fr-FR')} à ${new Date(o.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+                                : ''} • {o.shipping_city || 'Abidjan'} • {count} article{count > 1 ? 's' : ''}
                             </p>
                           </div>
                           <span className={`status-pill ${stInfo.pillClass} shrink-0`}>

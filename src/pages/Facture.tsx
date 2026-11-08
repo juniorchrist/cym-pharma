@@ -65,6 +65,22 @@ export const Facture: React.FC = () => {
     return new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
   })();
 
+  const formattedOrderDateTime = (() => {
+    const d = order?.created_at;
+    if (d) {
+      const dateObj = new Date(d);
+      if (!isNaN(dateObj.getTime())) {
+        const dd = String(dateObj.getDate()).padStart(2, '0');
+        const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const yyyy = dateObj.getFullYear();
+        const hh = String(dateObj.getHours()).padStart(2, '0');
+        const min = String(dateObj.getMinutes()).padStart(2, '0');
+        return `${dd}/${mm}/${yyyy} à ${hh}:${min}`;
+      }
+    }
+    return formattedDate;
+  })();
+
   const clientName =
     order?.establishment_name ||
     (order?.first_name && order?.last_name ? `${order.first_name} ${order.last_name}` : '');
@@ -206,10 +222,10 @@ export const Facture: React.FC = () => {
       {/* Utilise la même police ('Inter', system-ui, -apple-system, sans-serif) et le même conteneur strict que le Bon de Livraison */}
       <main
         id="facture-printable-doc"
-        className={`page-a4 relative w-[210mm] max-w-full h-[297mm] min-h-[297mm] max-h-[297mm] bg-white shadow-xl flex flex-col justify-between overflow-hidden box-border mx-auto print:shadow-none print:border-none print:m-0 ${
+        className={`page-a4 relative w-full max-w-[850px] print:w-[210mm] print:max-w-none h-auto min-h-0 sm:min-h-[297mm] print:h-[297mm] print:min-h-[297mm] print:max-h-[297mm] bg-white shadow-xl flex flex-col justify-between overflow-visible print:overflow-hidden box-border mx-auto print:shadow-none print:border-none print:m-0 rounded-2xl print:rounded-none ${
           isLongList
-            ? 'p-[22px_32px_18px_32px] print:p-[18px_28px_14px_28px]'
-            : 'p-[28px_40px_22px_40px] print:p-[24px_34px_18px_34px]'
+            ? 'p-3.5 sm:p-5 md:p-[22px_32px_18px_32px] print:p-[18px_28px_14px_28px]'
+            : 'p-4 sm:p-7 md:p-[28px_40px_22px_40px] print:p-[24px_34px_18px_34px]'
         }`}
         style={{
           fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
@@ -226,18 +242,18 @@ export const Facture: React.FC = () => {
         {/* ── CONTENU HAUT & MILIEU ── */}
         <div className="relative z-[2] flex flex-col flex-1 min-h-0">
           {/* 1. EN-TÊTE DE FACTURE */}
-          <div className="flex items-start justify-between pb-2.5 border-b-2 border-slate-900 shrink-0">
+          <div className="flex flex-col sm:flex-row print:flex-row items-start justify-between pb-2.5 border-b-2 border-slate-900 shrink-0 gap-3">
             <div className="flex items-center gap-3">
               <img
                 src="/LOGO.png"
                 alt={COMPANY.name}
-                className="h-[46px] w-auto max-w-[190px] object-contain object-left shrink-0"
+                className="h-[38px] sm:h-[46px] w-auto max-w-[150px] sm:max-w-[190px] object-contain object-left shrink-0"
               />
               <div>
-                <p className="text-[10px] font-semibold text-[var(--primary)]">
+                <p className="text-[10px] font-semibold text-[var(--primary)] leading-tight">
                   {COMPANY.tagline || 'Dispositifs Médicaux & Consommables Hospitaliers B2B'}
                 </p>
-                <p className="text-[9px] text-slate-500 mt-0.5">
+                <p className="text-[9px] text-slate-500 mt-0.5 leading-snug">
                   {[
                     COMPANY.address,
                     COMPANY.taxId ? `N° CC : ${COMPANY.taxId}` : null,
@@ -247,14 +263,14 @@ export const Facture: React.FC = () => {
               </div>
             </div>
 
-            <div className="text-right">
-              <span className="inline-block px-2.5 py-0.5 bg-slate-900 text-white text-[10px] font-extrabold uppercase tracking-widest rounded">
+            <div className="w-full sm:w-auto print:w-auto flex sm:flex-col print:flex-col items-center sm:items-end print:items-end justify-between sm:justify-start gap-1">
+              <span className="inline-block px-2.5 py-0.5 bg-slate-900 text-white text-[10px] font-extrabold uppercase tracking-widest rounded whitespace-nowrap">
                 FACTURE B2B
               </span>
-              <p className="font-bold text-xs text-slate-900 mt-1">
+              <p className="font-bold text-xs text-slate-900 mt-0.5 whitespace-nowrap">
                 N° {invoiceNumber}
               </p>
-              <p className="text-[10px] text-slate-500">
+              <p className="text-[10px] text-slate-500 whitespace-nowrap">
                 Date : {formattedDate}
               </p>
             </div>
@@ -262,41 +278,39 @@ export const Facture: React.FC = () => {
 
           {/* 2. BLOC COORDONNÉES CLIENT & RÉFÉRENCES */}
           <div
-            className={`grid grid-cols-2 gap-4 rounded-lg bg-slate-50 border border-slate-200 text-xs shrink-0 ${
-              isLongList ? 'my-2 p-2.5' : 'my-3 p-3.5'
+            className={`grid grid-cols-1 sm:grid-cols-2 print:grid-cols-2 gap-3 sm:gap-4 rounded-xl bg-slate-50 border border-slate-200 text-xs shrink-0 ${
+              isLongList ? 'my-2 p-2.5 sm:p-3' : 'my-2.5 sm:my-3 p-3 sm:p-3.5'
             }`}
           >
-            <div>
-              <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">
+            <div className="space-y-0.5">
+              <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
                 Destinataire / Client
               </p>
-              <p className="text-xs font-extrabold text-slate-900 leading-tight">
+              <p className="text-xs sm:text-[13px] font-extrabold text-slate-900 leading-snug">
                 {clientName}
               </p>
-              <p className="text-[10.5px] text-slate-600 mt-0.5">
+              <p className="text-[10.5px] text-slate-600 mt-0.5 leading-relaxed">
                 {fullAddress}
               </p>
               {order?.shipping_notes && (
-                <p className="text-[9.5px] text-slate-500 italic mt-0.5 truncate">
+                <p className="text-[9.5px] text-slate-500 italic mt-0.5">
                   Note : {order.shipping_notes}
                 </p>
               )}
             </div>
 
-            <div className="border-l border-slate-200 pl-4 space-y-1 text-[11px]">
-              <div className="flex justify-between">
-                <span className="text-slate-500">Réf. Commande :</span>
-                <span className="font-bold text-slate-900">{orderNumber}</span>
+            <div className="border-t pt-2.5 sm:border-t-0 sm:pt-0 sm:border-l sm:pl-4 print:border-l print:border-t-0 print:pl-4 border-slate-200 space-y-1.5 text-[11px]">
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-slate-500 shrink-0">Réf. Commande :</span>
+                <span className="font-bold text-slate-900 font-ref text-right">{orderNumber}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Date commande :</span>
-                <span className="font-medium text-slate-800">
-                  {order?.created_at ? new Date(order.created_at).toLocaleDateString('fr-FR') : formattedDate}
-                </span>
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-slate-500 shrink-0">Date commande :</span>
+                <span className="font-medium text-slate-800 text-right">{formattedOrderDateTime}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Échéance :</span>
-                <span className="font-semibold text-emerald-700">À réception de facture</span>
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-slate-500 shrink-0">Échéance :</span>
+                <span className="font-semibold text-emerald-700 text-right">À réception de facture</span>
               </div>
             </div>
           </div>
@@ -304,12 +318,12 @@ export const Facture: React.FC = () => {
           {/* 3. TABLEAU DES ARTICLES (ADAPTATIF : 1 COLONNE SI <= 12, 2 COLONNES COMPACTES SI > 12) */}
           {isLongList ? (
             /* ── AFFICHAGE COMPACT 2 COLONNES (POUR JUSQU'À 35-40 ARTICLES SUR 1 SEULE PAGE) ── */
-            <div className="grid grid-cols-2 gap-2.5 my-1 flex-1 overflow-hidden">
+            <div className="grid grid-cols-1 sm:grid-cols-2 print:grid-cols-2 gap-2.5 my-1 flex-1 overflow-x-auto print:overflow-hidden">
               {/* Colonne Gauche (Articles 1 à N/2) */}
-              <div className="border border-slate-200 rounded-lg overflow-hidden flex flex-col">
-                <table className="w-full text-left text-[9px] border-collapse">
+              <div className="border border-slate-200 rounded-lg overflow-x-auto print:overflow-hidden flex flex-col">
+                <table className="w-full min-w-[320px] sm:min-w-full text-left text-[9px] border-collapse">
                   <thead>
-                    <tr className="bg-slate-900 text-white uppercase text-[8px] tracking-wider leading-none">
+                    <tr className="bg-slate-900 text-white uppercase text-[8px] tracking-wider leading-none whitespace-nowrap">
                       <th className="py-1 px-1.5 font-semibold text-center w-5">N°</th>
                       <th className="py-1 px-1.5 font-semibold">Désignation</th>
                       <th className="py-1 px-1 font-semibold text-center w-7">Qté</th>
@@ -325,7 +339,7 @@ export const Facture: React.FC = () => {
 
                       return (
                         <tr key={idx} className={idx % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
-                          <td className="py-0.5 px-1.5 text-center text-slate-400 font-bold text-[8.5px]">
+                          <td className="py-0.5 px-1.5 text-center text-slate-400 font-bold text-[8.5px] whitespace-nowrap">
                             {idx + 1}
                           </td>
                           <td className="py-0.5 px-1.5">
@@ -336,13 +350,13 @@ export const Facture: React.FC = () => {
                               {item.conditionnement || item.unit || 'U'}
                             </div>
                           </td>
-                          <td className="py-0.5 px-1 text-center font-bold text-slate-900">
+                          <td className="py-0.5 px-1 text-center font-bold text-slate-900 whitespace-nowrap">
                             {qty}
                           </td>
-                          <td className="py-0.5 px-1 text-right text-slate-700">
+                          <td className="py-0.5 px-1 text-right text-slate-700 whitespace-nowrap font-mono">
                             {unitPrice > 0 ? unitPrice.toLocaleString('fr-FR') : '—'}
                           </td>
-                          <td className="py-0.5 px-1.5 text-right font-bold text-slate-900">
+                          <td className="py-0.5 px-1.5 text-right font-bold text-slate-900 whitespace-nowrap font-mono">
                             {lineTotal > 0 ? lineTotal.toLocaleString('fr-FR') : '—'}
                           </td>
                         </tr>
@@ -353,10 +367,10 @@ export const Facture: React.FC = () => {
               </div>
 
               {/* Colonne Droite (Articles N/2+1 à Fin) */}
-              <div className="border border-slate-200 rounded-lg overflow-hidden flex flex-col">
-                <table className="w-full text-left text-[9px] border-collapse">
+              <div className="border border-slate-200 rounded-lg overflow-x-auto print:overflow-hidden flex flex-col">
+                <table className="w-full min-w-[320px] sm:min-w-full text-left text-[9px] border-collapse">
                   <thead>
-                    <tr className="bg-slate-900 text-white uppercase text-[8px] tracking-wider leading-none">
+                    <tr className="bg-slate-900 text-white uppercase text-[8px] tracking-wider leading-none whitespace-nowrap">
                       <th className="py-1 px-1.5 font-semibold text-center w-5">N°</th>
                       <th className="py-1 px-1.5 font-semibold">Désignation</th>
                       <th className="py-1 px-1 font-semibold text-center w-7">Qté</th>
@@ -373,7 +387,7 @@ export const Facture: React.FC = () => {
 
                       return (
                         <tr key={realIdx} className={idx % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
-                          <td className="py-0.5 px-1.5 text-center text-slate-400 font-bold text-[8.5px]">
+                          <td className="py-0.5 px-1.5 text-center text-slate-400 font-bold text-[8.5px] whitespace-nowrap">
                             {realIdx + 1}
                           </td>
                           <td className="py-0.5 px-1.5">
@@ -384,13 +398,13 @@ export const Facture: React.FC = () => {
                               {item.conditionnement || item.unit || 'U'}
                             </div>
                           </td>
-                          <td className="py-0.5 px-1 text-center font-bold text-slate-900">
+                          <td className="py-0.5 px-1 text-center font-bold text-slate-900 whitespace-nowrap">
                             {qty}
                           </td>
-                          <td className="py-0.5 px-1 text-right text-slate-700">
+                          <td className="py-0.5 px-1 text-right text-slate-700 whitespace-nowrap font-mono">
                             {unitPrice > 0 ? unitPrice.toLocaleString('fr-FR') : '—'}
                           </td>
-                          <td className="py-0.5 px-1.5 text-right font-bold text-slate-900">
+                          <td className="py-0.5 px-1.5 text-right font-bold text-slate-900 whitespace-nowrap font-mono">
                             {lineTotal > 0 ? lineTotal.toLocaleString('fr-FR') : '—'}
                           </td>
                         </tr>
@@ -402,16 +416,16 @@ export const Facture: React.FC = () => {
             </div>
           ) : (
             /* ── AFFICHAGE STANDARD 1 COLONNE (POUR LES COMMANDES ORDINAIRES <= 12 ARTICLES) ── */
-            <div className="border border-slate-200 rounded-xl overflow-hidden my-2 shrink-0">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="border border-slate-200 rounded-xl overflow-x-auto print:overflow-visible my-2 shrink-0">
+              <table className="w-full min-w-[500px] sm:min-w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="bg-slate-900 text-white uppercase text-[10px] tracking-wider">
-                    <th className="py-2 px-3 font-semibold text-center w-10">N°</th>
-                    <th className="py-2 px-3 font-semibold">Désignation de l'article</th>
-                    <th className="py-2 px-3 font-semibold text-center w-24">Cond.</th>
-                    <th className="py-2 px-3 font-semibold text-center w-14">Qté</th>
-                    <th className="py-2 px-3 font-semibold text-right w-28">P.U. HT (FCFA)</th>
-                    <th className="py-2 px-3 font-semibold text-right w-32">Total HT (FCFA)</th>
+                  <tr className="bg-slate-900 text-white uppercase text-[10px] tracking-wider whitespace-nowrap">
+                    <th className="py-2 px-2.5 sm:px-3 font-semibold text-center w-9 sm:w-10">N°</th>
+                    <th className="py-2 px-2.5 sm:px-3 font-semibold min-w-[140px]">Désignation de l'article</th>
+                    <th className="py-2 px-2 sm:px-3 font-semibold text-center w-20 sm:w-24">Cond.</th>
+                    <th className="py-2 px-2 sm:px-3 font-semibold text-center w-12 sm:w-14">Qté</th>
+                    <th className="py-2 px-2.5 sm:px-3 font-semibold text-right w-24 sm:w-28">P.U. HT</th>
+                    <th className="py-2 px-2.5 sm:px-3 font-semibold text-right w-28 sm:w-32">Total HT</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -422,18 +436,18 @@ export const Facture: React.FC = () => {
 
                     return (
                       <tr key={idx} className={idx % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
-                        <td className="py-2 px-3 text-center text-slate-400 font-bold text-[11px]">{idx + 1}</td>
-                        <td className="py-2 px-3 font-medium text-slate-900">
+                        <td className="py-2 px-2.5 sm:px-3 text-center text-slate-400 font-bold text-[11px] whitespace-nowrap">{idx + 1}</td>
+                        <td className="py-2 px-2.5 sm:px-3 font-medium text-slate-900">
                           {item.name || item.product_name}
                         </td>
-                        <td className="py-2 px-3 text-center text-slate-500 text-[11px]">
+                        <td className="py-2 px-2 sm:px-3 text-center text-slate-500 text-[11px] whitespace-nowrap">
                           {item.conditionnement || item.unit || 'Boîte'}
                         </td>
-                        <td className="py-2 px-3 text-center font-bold text-slate-900">{qty}</td>
-                        <td className="py-2 px-3 text-right text-slate-700">
+                        <td className="py-2 px-2 sm:px-3 text-center font-bold text-slate-900 whitespace-nowrap">{qty}</td>
+                        <td className="py-2 px-2.5 sm:px-3 text-right text-slate-700 whitespace-nowrap font-mono">
                           {unitPrice > 0 ? unitPrice.toLocaleString('fr-FR') : '—'}
                         </td>
-                        <td className="py-2 px-3 text-right font-bold text-slate-900">
+                        <td className="py-2 px-2.5 sm:px-3 text-right font-bold text-slate-900 whitespace-nowrap font-mono">
                           {lineTotal > 0 ? lineTotal.toLocaleString('fr-FR') : '—'}
                         </td>
                       </tr>
@@ -446,28 +460,28 @@ export const Facture: React.FC = () => {
 
           {/* 4. RÉCAPITULATIF FINANCIER */}
           <div
-            className={`grid grid-cols-[1.25fr_1fr] gap-4 items-start shrink-0 ${
-              isLongList ? 'mt-1.5' : 'mt-3'
+            className={`grid grid-cols-1 sm:grid-cols-[1.25fr_1fr] print:grid-cols-[1.25fr_1fr] gap-3 sm:gap-4 items-start shrink-0 ${
+              isLongList ? 'mt-1.5' : 'mt-2.5 sm:mt-3'
             }`}
           >
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 order-2 sm:order-1 print:order-1">
               <p className={`text-slate-400 leading-tight ${isLongList ? 'text-[8px]' : 'text-[10px]'}`}>
-                * Facture établie sur la base des prix chiffrés et validés par CYM Pharma.
+                * Dispositifs médicaux conformes Art. 355 CGI Côte d'Ivoire. Facture établie sur la base des prix chiffrés et validés par CYM Pharma SARL.
               </p>
             </div>
 
             <div
-              className={`bg-slate-50 rounded-lg border border-slate-200 space-y-1 text-slate-600 ${
-                isLongList ? 'p-2 text-[10.5px]' : 'p-3 text-xs'
+              className={`bg-slate-50 rounded-xl border border-slate-200 space-y-1.5 text-slate-600 order-1 sm:order-2 print:order-2 ${
+                isLongList ? 'p-2 text-[10.5px]' : 'p-3 sm:p-3.5 text-xs'
               }`}
             >
-              <div className="flex justify-between">
-                <span>Total Brut HT :</span>
-                <span className="font-semibold text-slate-800">{computedTotal.toLocaleString('fr-FR')} FCFA</span>
+              <div className="flex justify-between items-center gap-2">
+                <span className="shrink-0">Total Brut HT :</span>
+                <span className="font-semibold text-slate-800 text-right whitespace-nowrap">{computedTotal.toLocaleString('fr-FR')} FCFA</span>
               </div>
-              <div className="pt-1.5 border-t border-slate-300 flex justify-between items-baseline">
-                <span className="font-extrabold text-slate-900 text-xs">NET À PAYER :</span>
-                <span className="font-extrabold text-sm text-[var(--primary)]">
+              <div className="pt-2 border-t border-slate-300 flex justify-between items-baseline gap-2">
+                <span className="font-extrabold text-slate-900 text-xs shrink-0">NET À PAYER :</span>
+                <span className="font-extrabold text-sm sm:text-base text-[var(--primary)] text-right whitespace-nowrap">
                   {computedTotal.toLocaleString('fr-FR')} FCFA
                 </span>
               </div>
@@ -478,17 +492,17 @@ export const Facture: React.FC = () => {
         {/* ── BAS DE PAGE & SIGNATURE OFFICIELLE ── */}
         <div
           className={`relative z-[2] border-t border-slate-200 shrink-0 ${
-            isLongList ? 'pt-1.5 mt-1.5' : 'pt-3 mt-3'
+            isLongList ? 'pt-1.5 mt-1.5' : 'pt-2.5 sm:pt-3 mt-2.5 sm:mt-3'
           }`}
         >
-          <div className="grid grid-cols-2 gap-4 items-end mb-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 print:grid-cols-2 gap-3 sm:gap-4 items-end mb-2">
             <div className={`text-slate-500 ${isLongList ? 'text-[8.5px]' : 'text-[10px]'}`}>
               <p className="font-bold text-slate-700">Conditions &amp; Livraison :</p>
               <p>Livraison sur site client ou enlèvement selon accord commercial.</p>
               <p>Règlement à réception de facture selon conditions convenues.</p>
             </div>
 
-            <div className="text-right">
+            <div className="text-left sm:text-right print:text-right">
               <p className="text-[10px] font-bold text-slate-700">Pour {COMPANY.name}</p>
               <p className="text-[9px] text-slate-400">Direction Commerciale &amp; Logistique</p>
               <div className="mt-1 inline-block px-3 py-1 border border-dashed border-emerald-600 rounded bg-emerald-50/50">

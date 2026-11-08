@@ -32,7 +32,7 @@ import { mapOrder } from '../domain/orderMapper';
 import { ALL_PRODUCTS } from '../data/catalog';
 import { Order } from '../types';
 
-type PanelKey = 'overview' | 'commandes' | 'suivis' | 'factures' | 'profil' | 'support';
+type PanelKey = 'overview' | 'commandes' | 'factures' | 'profil' | 'support';
 
 export const Dashboard: React.FC = () => {
   const { user, logout } = useAuth();
@@ -45,16 +45,16 @@ export const Dashboard: React.FC = () => {
   const [activePanel, setActivePanel] = useState<PanelKey>(() => {
     const params = new URLSearchParams(window.location.search);
     const pParam = params.get('panel');
-    if (pParam === 'livraisons') return 'suivis';
-    if (pParam && ['overview', 'commandes', 'suivis', 'factures', 'profil', 'support'].includes(pParam)) {
+    if (pParam === 'livraisons' || pParam === 'suivis') return 'commandes';
+    if (pParam && ['overview', 'commandes', 'factures', 'profil', 'support'].includes(pParam)) {
       return pParam as PanelKey;
     }
     const saved = storage.getDashPanel() as PanelKey;
-    if (saved && ['overview', 'commandes', 'suivis', 'factures', 'profil', 'support'].includes(saved)) {
+    if (saved && ['overview', 'commandes', 'factures', 'profil', 'support'].includes(saved)) {
       return saved;
     }
     const hash = window.location.hash.replace('#', '') as PanelKey;
-    if (hash && ['overview', 'commandes', 'suivis', 'factures', 'profil', 'support'].includes(hash)) {
+    if (hash && ['overview', 'commandes', 'factures', 'profil', 'support'].includes(hash)) {
       return hash;
     }
     return 'overview';
@@ -65,9 +65,9 @@ export const Dashboard: React.FC = () => {
     const params = new URLSearchParams(location.search);
     const rawPanel = params.get('panel') || location.hash.replace('#', '');
     let target: PanelKey | null = null;
-    if (rawPanel === 'livraisons') {
-      target = 'suivis';
-    } else if (['overview', 'commandes', 'suivis', 'factures', 'profil', 'support'].includes(rawPanel)) {
+    if (rawPanel === 'livraisons' || rawPanel === 'suivis') {
+      target = 'commandes';
+    } else if (['overview', 'commandes', 'factures', 'profil', 'support'].includes(rawPanel)) {
       target = rawPanel as PanelKey;
     }
 
@@ -363,12 +363,6 @@ export const Dashboard: React.FC = () => {
   // Dernière commande réelle (la plus récente)
   const lastOrder = orders.length > 0 ? orders[0] : null;
 
-  // Commande en cours de livraison active
-  const activeShipment = orders.find((o) => {
-    const s = (o.status || '').toLowerCase();
-    return s.includes('livraison') || s.includes('expédition') || s === 'shipped';
-  }) || null;
-
   // Produits de réapprovisionnement rapide — uniquement depuis les produits réels et vérifiés du catalogue
   const reorderProducts = (() => {
     const seen = new Set<string>();
@@ -460,17 +454,6 @@ export const Dashboard: React.FC = () => {
                     <Package className="w-4 h-4 shrink-0" strokeWidth={2} />
                   </span>
                   <span className="flex-1 text-left">Mes commandes</span>
-                </button>
-
-                <button
-                  type="button"
-                  className={`side-item ${activePanel === 'suivis' ? 'active' : ''}`}
-                  onClick={() => switchPanel('suivis')}
-                >
-                  <span className="icon-box">
-                    <Truck className="w-4 h-4 shrink-0" strokeWidth={2} />
-                  </span>
-                  <span className="flex-1 text-left">Suivis livraison</span>
                 </button>
 
                 <button
@@ -629,112 +612,6 @@ export const Dashboard: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Bloc Suivi de livraison & Timeline — données réelles uniquement */}
-                <div className="dash-card p-6">
-                  {activeShipment ? (
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100 mb-5">
-                      <div>
-                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                          Suivi d'expédition actif
-                        </span>
-                        <h3 id="active-delivery-ref" className="text-base font-bold text-slate-900 mt-0.5">
-                          <span className="font-ref text-[var(--primary)]">{activeShipment.orderNumber || activeShipment.id}</span>
-                          {activeShipment.establishment_name && ` — ${activeShipment.establishment_name}`}
-                        </h3>
-                      </div>
-                      <span id="active-delivery-badge" className="status-pill status-pill-blue self-start sm:self-auto">
-                        <Truck className="w-3 h-3" />
-                        <span>{activeShipment.status || 'En livraison'}</span>
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="pb-4 border-b border-slate-100 mb-5">
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Suivi d'expédition</span>
-                    </div>
-                  )}
-
-                  {activeShipment ? (
-                    <>
-                  {/* Timeline 4 étapes avec ligne de progression connectée */}
-                  <div className="relative py-3 mb-4">
-                    <div className="absolute top-7 left-[12%] right-[12%] h-1 bg-slate-100 -translate-y-1/2 z-0 hidden sm:block">
-                      <div className="h-full bg-emerald-500 w-[66%]" />
-                    </div>
-
-                    <div className="relative z-10 grid grid-cols-4 gap-2 text-center">
-                      <div className="space-y-1.5 flex flex-col items-center">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-white bg-emerald-600 shadow-xs ring-4 ring-white">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                        </div>
-                        <p className="text-xs font-bold text-slate-900">Validée</p>
-                        <p className="text-[10px] text-slate-400">Officine</p>
-                      </div>
-
-                      <div className="space-y-1.5 flex flex-col items-center">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-white bg-emerald-600 shadow-xs ring-4 ring-white">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                        </div>
-                        <p className="text-xs font-bold text-slate-900">Préparation</p>
-                        <p className="text-[10px] text-slate-400">Dépôt Abidjan</p>
-                      </div>
-
-                      <div className="space-y-1.5 flex flex-col items-center">
-                        <div
-                          className="w-8 h-8 rounded-full flex items-center justify-center text-white shadow-xs ring-4 ring-white"
-                          style={{ background: 'var(--primary)' }}
-                        >
-                          <Truck className="w-3.5 h-3.5" />
-                        </div>
-                        <p className="text-xs font-bold text-blue-700">En livraison</p>
-                        <p className="text-[10px] text-slate-500 font-medium">En route</p>
-                      </div>
-
-                      <div className="space-y-1.5 flex flex-col items-center">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs bg-slate-100 text-slate-400 ring-4 ring-white">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                        </div>
-                        <p className="text-xs font-medium text-slate-400">Livrée</p>
-                        <p className="text-[10px] text-slate-400">Délivrance</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-600">
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-400 font-medium">Destination :</span>
-                      <span id="active-delivery-city" className="font-semibold text-slate-800">
-                        {activeShipment?.shipping_city || 'Abidjan'}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-400 font-medium">Établissement :</span>
-                      <span id="active-delivery-mode" className="font-semibold text-slate-800">
-                        {activeShipment?.establishment_name || displayOrg || 'Votre établissement'}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 sm:justify-end">
-                      <Link
-                        to={`/facture?id=${activeShipment?.orderNumber || activeShipment?.id || ''}`}
-                        target="_blank"
-                        className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--primary)] hover:underline"
-                      >
-                        <FileText className="w-3 h-3" />
-                        <span>Consulter la Facture A4</span>
-                      </Link>
-                    </div>
-                  </div>
-                    </>
-                  ) : (
-                    <div className="py-8 text-center space-y-2">
-                      <Truck className="w-8 h-8 text-slate-200 mx-auto" strokeWidth={1.5} />
-                      <p className="text-sm font-semibold text-slate-600">Aucune expédition en cours</p>
-                      <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                        Le suivi de livraison apparaîtra ici lorsqu'une commande sera en cours d'acheminement.
-                      </p>
-                    </div>
-                  )}
-                </div>
-
                 {/* Bloc "Dernier achat" & "Réapprovisionnement rapide" — données réelles uniquement */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   {/* Dernier achat mis en avant */}
@@ -757,7 +634,7 @@ export const Dashboard: React.FC = () => {
                         </h4>
                         <p id="last-order-meta" className="text-xs text-slate-500 mt-1">
                           {lastOrder.created_at
-                            ? new Date(lastOrder.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })
+                            ? `${new Date(lastOrder.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })} à ${new Date(lastOrder.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
                             : 'Date inconnue'}
                           {' • '}{(lastOrder.items || []).length} article(s)
                         </p>
@@ -896,12 +773,19 @@ export const Dashboard: React.FC = () => {
                             <td className="py-3.5 font-ref font-bold text-[var(--primary)]">
                               {ord.orderNumber || ord.id}
                             </td>
-                            <td className="py-3.5 text-slate-600">
-                              {new Date(ord.created_at || '').toLocaleDateString('fr-FR', {
-                                day: '2-digit',
-                                month: 'short',
-                                year: 'numeric',
-                              })}
+                            <td className="py-3.5 text-slate-600 whitespace-nowrap">
+                              <span>
+                                {new Date(ord.created_at || '').toLocaleDateString('fr-FR', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  year: 'numeric',
+                                })}
+                              </span>
+                              {ord.created_at && (
+                                <span className="text-[11px] text-slate-400 block">
+                                  à {new Date(ord.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              )}
                             </td>
                             <td className="py-3.5 text-slate-600">
                               {(() => {
@@ -1019,12 +903,19 @@ export const Dashboard: React.FC = () => {
                             <td className="py-4 font-ref font-bold text-[var(--primary)]">
                               {ord.orderNumber || ord.id}
                             </td>
-                            <td className="py-4 text-slate-600">
-                              {new Date(ord.created_at || '').toLocaleDateString('fr-FR', {
-                                day: '2-digit',
-                                month: 'short',
-                                year: 'numeric',
-                              })}
+                            <td className="py-4 text-slate-600 whitespace-nowrap">
+                              <span>
+                                {new Date(ord.created_at || '').toLocaleDateString('fr-FR', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  year: 'numeric',
+                                })}
+                              </span>
+                              {ord.created_at && (
+                                <span className="text-[11px] text-slate-400 block">
+                                  à {new Date(ord.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              )}
                             </td>
                             <td className="py-4 text-slate-600">
                               {(() => {
@@ -1077,99 +968,7 @@ export const Dashboard: React.FC = () => {
               </div>
             )}
 
-            {/* PANEL 3: SUIVIS LIVRAISON */}
-            {activePanel === 'suivis' && (
-              <div id="panel-suivis" className="dash-panel active space-y-6">
-                <div className="dash-card p-6 sm:p-7">
-                  <div className="pb-4 border-b border-slate-100 mb-6">
-                    <h2 className="text-xl font-bold tracking-tight text-slate-900">
-                      Suivi des expéditions &amp; Livraisons
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Suivez l'état d'acheminement de vos colis médicaux en Côte d'Ivoire.
-                    </p>
-                  </div>
 
-                  {activeShipment ? (
-                    <div className="p-5 rounded-xl border border-slate-200 mb-6 bg-slate-50">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200 mb-4">
-                        <div>
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="font-ref text-xs font-bold text-[var(--primary)] px-2 py-0.5 rounded bg-blue-50">
-                              {activeShipment.orderNumber || activeShipment.id}
-                            </span>
-                            {activeShipment.invoice_number && (
-                              <span className="text-xs text-slate-500">Facture #{activeShipment.invoice_number}</span>
-                            )}
-                          </div>
-                          <h4 className="text-sm font-bold text-slate-900">
-                            {(activeShipment.items || []).length > 0
-                              ? (activeShipment.items || []).map((it: any) => it.name || 'Dispositif médical').join(', ')
-                              : activeShipment.establishment_name || 'Commande en cours de livraison'}
-                          </h4>
-                        </div>
-                        <div className="text-left sm:text-right">
-                          <span className="status-pill status-pill-blue">{activeShipment.status || 'En acheminement'}</span>
-                          <p className="text-[11px] text-slate-500 mt-1">
-                            Destination : {activeShipment.shipping_city || displayOrg || 'Abidjan'}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-4 gap-2 text-center py-2 mb-3">
-                        <div className="space-y-1">
-                          <div className="w-8 h-8 rounded-full mx-auto flex items-center justify-center text-white bg-emerald-600 shadow-sm">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                          </div>
-                          <p className="text-xs font-bold text-slate-900">Validée</p>
-                          <p className="text-[10px] text-slate-400">Officine</p>
-                        </div>
-                        <div className="space-y-1">
-                          <div className="w-8 h-8 rounded-full mx-auto flex items-center justify-center text-white bg-emerald-600 shadow-sm">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                          </div>
-                          <p className="text-xs font-bold text-slate-900">Préparée</p>
-                          <p className="text-[10px] text-slate-400">Dépôt</p>
-                        </div>
-                        <div className="space-y-1">
-                          <div
-                            className="w-8 h-8 rounded-full mx-auto flex items-center justify-center text-white shadow-sm"
-                            style={{ background: 'var(--primary)' }}
-                          >
-                            <Truck className="w-3.5 h-3.5" />
-                          </div>
-                          <p className="text-xs font-bold text-blue-700">En livraison</p>
-                          <p className="text-[10px] text-slate-500 font-medium">En transit</p>
-                        </div>
-                        <div className="space-y-1">
-                          <div className="w-8 h-8 rounded-full mx-auto flex items-center justify-center text-xs bg-slate-100 text-slate-400">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                          </div>
-                          <p className="text-xs font-medium text-slate-400">Livrée</p>
-                          <p className="text-[10px] text-slate-400">Estimée</p>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="py-12 text-center space-y-3">
-                      <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto">
-                        <Truck className="w-6 h-6 text-slate-300" strokeWidth={1.5} />
-                      </div>
-                      <div>
-                        <p className="text-base font-bold text-slate-700">Aucune livraison en cours</p>
-                        <p className="text-xs text-slate-400 max-w-sm mx-auto mt-1">
-                          Le suivi de vos expéditions apparaîtra ici lorsqu'une commande sera en cours d'acheminement vers votre établissement.
-                        </p>
-                      </div>
-                      <Link to="/catalogue" className="inline-flex items-center gap-2 btn-cym-primary text-xs !py-1.5 !px-4">
-                        <Plus className="w-3 h-3" />
-                        <span>Passer une commande</span>
-                      </Link>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
 
             {/* PANEL 4: FACTURES & PIÈCES COMPTABLES */}
             {activePanel === 'factures' && (
@@ -1208,12 +1007,19 @@ export const Dashboard: React.FC = () => {
                               {o.invoice_number || `FAC-${String(o.orderNumber || o.id).replace('CMD-', '')}`}
                             </td>
                             <td className="py-3.5 font-ref text-slate-600">{o.orderNumber || o.id}</td>
-                            <td className="py-3.5 text-slate-600">
-                              {new Date(o.invoice_date || o.created_at || '').toLocaleDateString('fr-FR', {
-                                day: '2-digit',
-                                month: 'short',
-                                year: 'numeric',
-                              })}
+                            <td className="py-3.5 text-slate-600 whitespace-nowrap">
+                              <span>
+                                {new Date(o.invoice_date || o.created_at || '').toLocaleDateString('fr-FR', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  year: 'numeric',
+                                })}
+                              </span>
+                              {o.created_at && (
+                                <span className="text-[11px] text-slate-400 block">
+                                  à {new Date(o.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              )}
                             </td>
                             <td className="py-3.5 font-semibold text-slate-900">
                               {o.total ? formatCurrency(o.total) : <span className="text-slate-400 font-normal italic">En cours</span>}

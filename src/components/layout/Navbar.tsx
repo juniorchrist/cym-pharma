@@ -121,10 +121,6 @@ const AccountSheet: React.FC<AccountSheetProps> = ({
                 <FileText size={17} className="text-slate-400" />
                 <span>Factures</span>
               </button>
-              <button onClick={() => go('/dashboard?panel=suivis')} className="sheet-item">
-                <MapPin size={17} className="text-slate-400" />
-                <span>Adresses &amp; Livraisons</span>
-              </button>
               <button onClick={() => go('/dashboard?panel=support')} className="sheet-item">
                 <HeadphonesIcon size={17} className="text-slate-400" />
                 <span>Support</span>
@@ -395,14 +391,6 @@ export const Navbar: React.FC = () => {
                         >
                           <FileText className="w-4 h-4 text-slate-400" />
                           <span>Factures</span>
-                        </Link>
-                        <Link
-                          to="/dashboard?panel=livraisons"
-                          onClick={() => setUserDropdownOpen(false)}
-                          className="flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition"
-                        >
-                          <MapPin className="w-4 h-4 text-slate-400" />
-                          <span>Adresses</span>
                         </Link>
                         <Link
                           to="/dashboard?panel=support"

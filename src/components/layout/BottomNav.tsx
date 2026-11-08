@@ -5,7 +5,7 @@ import {
   LayoutGrid,
   RotateCcw,
   ClipboardList,
-  Truck,
+  FileText,
   MessageCircle,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
@@ -31,7 +31,7 @@ const ITEMS: NavItem[] = [
   { key: 'catalogue', label: 'Catalogue', icon: LayoutGrid,     to: '/catalogue' },
   { key: 'reorder',  label: 'Racheter',  icon: RotateCcw,      to: '/dashboard?panel=overview&scroll=reappro' },
   { key: 'orders',   label: 'Commandes', icon: ClipboardList,  to: '/dashboard?panel=commandes' },
-  { key: 'suivi',    label: 'Suivi',     icon: Truck,          to: '/dashboard?panel=suivis' },
+  { key: 'factures', label: 'Factures',  icon: FileText,       to: '/dashboard?panel=factures' },
 ];
 
 /* ─── Calcul de l'index actif ─── */
@@ -51,10 +51,10 @@ function getActiveIndex(pathname: string, panel: string, search: string): number
   if (p.startsWith('/dashboard')) {
     // Racheter → panel=overview ou scroll=reappro
     if (search.includes('scroll=reappro') || panel === 'overview') return 2;
-    // Commandes → panel=commandes ou factures
-    if (['commandes', 'factures'].includes(panel)) return 3;
-    // Suivi → panel=suivis ou livraisons
-    if (['suivis', 'livraisons'].includes(panel)) return 4;
+    // Commandes → panel=commandes
+    if (panel === 'commandes') return 3;
+    // Factures → panel=factures
+    if (panel === 'factures') return 4;
     return -1;
   }
   return -1;

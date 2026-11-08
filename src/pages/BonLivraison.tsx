@@ -59,18 +59,18 @@ export const BonLivraison: React.FC = () => {
     }
   }, [orderId]);
 
-  // Date format jj/mm/aaaa
+  // Date format jj/mm/aaaa à hh:mm
   const formattedDate = (() => {
-    if (order.created_at) {
-      const d = new Date(order.created_at);
-      if (!isNaN(d.getTime())) {
-        const dd = String(d.getDate()).padStart(2, '0');
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const yyyy = d.getFullYear();
-        return `${dd}/${mm}/${yyyy}`;
-      }
+    const d = order.created_at ? new Date(order.created_at) : new Date();
+    if (!isNaN(d.getTime())) {
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const yyyy = d.getFullYear();
+      const hh = String(d.getHours()).padStart(2, '0');
+      const min = String(d.getMinutes()).padStart(2, '0');
+      return `${dd}/${mm}/${yyyy} à ${hh}:${min}`;
     }
-    return '18/09/2026';
+    return new Date().toLocaleDateString('fr-FR');
   })();
 
   const clientName =
