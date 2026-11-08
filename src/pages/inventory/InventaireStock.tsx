@@ -148,6 +148,20 @@ export const InventaireStock: React.FC<InventaireStockProps> = ({ onOpenImport, 
     }
   };
 
+  const handleDelete = async (item: InventoryItemWithStatus) => {
+    if (!window.confirm(`Confirmez-vous la désactivation de l'article "${item.designation}" (${item.code}) du stock ?`)) {
+      return;
+    }
+    const res = await InventaireService.deleteItem(item.id);
+    if (res.success) {
+      showToast('Article retiré du stock actif', 'success');
+      loadStats();
+      loadItems();
+    } else {
+      showToast(res.message || 'Erreur lors de la suppression', 'error');
+    }
+  };
+
   const handleQuickMovement = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedItem) return;
@@ -408,8 +422,31 @@ export const InventaireStock: React.FC<InventaireStockProps> = ({ onOpenImport, 
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-400">
-                    Aucun article trouvé pour les critères sélectionnés.
+                  <td colSpan={7} className="py-12 text-center text-slate-500">
+                    <div className="max-w-md mx-auto space-y-3">
+                      <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
+                        <FileSpreadsheet className="w-6 h-6" />
+                      </div>
+                      <p className="font-semibold text-slate-800">
+                        {totalCount === 0 && !search && statusFilter === 'all'
+                          ? "Votre catalogue d'inventaire est actuellement vide"
+                          : "Aucun article trouvé pour les critères sélectionnés"}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {totalCount === 0 && !search && statusFilter === 'all'
+                          ? "Initialisez vos 306 articles officiels en important le Classeur1.xlsx du serveur ou téléversez votre fichier Excel personnalisé."
+                          : "Essayez de modifier votre recherche ou de réinitialiser les filtres."}
+                      </p>
+                      {totalCount === 0 && onOpenImport && (
+                        <button
+                          onClick={onOpenImport}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition cursor-pointer shadow-sm"
+                        >
+                          <FileSpreadsheet className="w-4 h-4" />
+                          <span>Accéder à l'import Excel</span>
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -454,6 +491,13 @@ export const InventaireStock: React.FC<InventaireStockProps> = ({ onOpenImport, 
                           title="Modifier"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(item)}
+                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition cursor-pointer"
+                          title="Désactiver l'article"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </td>

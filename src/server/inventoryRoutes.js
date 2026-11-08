@@ -230,18 +230,26 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
         }
       }
 
+      const CHUNK_SIZE = 50;
+
       if (itemsToUpsert.length > 0) {
-        const { error: itemErr } = await db.from('inventory_items').upsert(itemsToUpsert);
-        if (itemErr) {
-          console.error('[Inventory] Error upserting items to Supabase:', itemErr);
-          return send(res, 500, { success: false, message: 'Erreur enregistrement Supabase: ' + itemErr.message });
+        for (let i = 0; i < itemsToUpsert.length; i += CHUNK_SIZE) {
+          const chunk = itemsToUpsert.slice(i, i + CHUNK_SIZE);
+          const { error: itemErr } = await db.from('inventory_items').upsert(chunk);
+          if (itemErr) {
+            console.error('[Inventory] Error upserting items to Supabase:', itemErr);
+            return send(res, 500, { success: false, message: 'Erreur enregistrement Supabase: ' + itemErr.message });
+          }
         }
       }
 
       if (movementsToInsert.length > 0) {
-        const { error: mvtErr } = await db.from('stock_movements').insert(movementsToInsert);
-        if (mvtErr) {
-          console.warn('[Inventory] Error inserting movements to Supabase:', mvtErr.message);
+        for (let i = 0; i < movementsToInsert.length; i += CHUNK_SIZE) {
+          const chunk = movementsToInsert.slice(i, i + CHUNK_SIZE);
+          const { error: mvtErr } = await db.from('stock_movements').insert(chunk);
+          if (mvtErr) {
+            console.warn('[Inventory] Error inserting movements to Supabase:', mvtErr.message);
+          }
         }
       }
 
@@ -441,7 +449,7 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
     if (!adminId) return;
 
     try {
-      const { designation, code, unit_label, product_id, min_stock, is_tracked, initial_qty } = req.body;
+      const { designation, code, unit_label, product_id, min_stock, is_tracked, initial_qty, opening_qty, opening_reason } = req.body;
       if (!designation) {
         return send(res, 400, { success: false, message: 'La désignation est obligatoire.' });
       }
@@ -456,7 +464,8 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
 
       const itemId = 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
       const trackedBool = is_tracked !== undefined ? Boolean(is_tracked) : true;
-      const startQty = Number(initial_qty) || 0;
+      const startQty = Number(opening_qty ?? initial_qty) || 0;
+      const startReason = opening_reason || 'Stock initial à la création';
       const nowIso = new Date().toISOString();
 
       const newItem = {
@@ -484,7 +493,7 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
           type: 'opening',
           quantity: startQty,
           movement_date: nowIso.split('T')[0],
-          reason: 'Stock initial à la création',
+          reason: startReason,
           created_by: 'Admin',
           created_at: nowIso,
         });
@@ -739,7 +748,11 @@ export function setupInventoryRoutes(router, db, requireAdmin, send) {
           counted_at: null,
           status: 'draft',
         }));
-        await db.from('inventory_counts').upsert(countEntries);
+
+        for (let i = 0; i < countEntries.length; i += 50) {
+          const chunk = countEntries.slice(i, i + 50);
+          await db.from('inventory_counts').upsert(chunk);
+        }
       }
 
       send(res, 201, { success: true, data: newPeriod, message: 'Nouvelle période démarrée pour ' + year_month });

@@ -56,8 +56,9 @@ export const InventaireImport: React.FC<InventaireImportProps> = ({ onImportComp
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
+        const buffer = evt.target?.result as ArrayBuffer;
+        const data = new Uint8Array(buffer);
+        const wb = XLSX.read(data, { type: 'array' });
         const sheetName = wb.SheetNames[0];
         const sheet = wb.Sheets[sheetName];
         const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
@@ -86,7 +87,7 @@ export const InventaireImport: React.FC<InventaireImportProps> = ({ onImportComp
         setLoading(false);
       }
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   };
 
   // Row update helpers

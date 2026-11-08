@@ -321,13 +321,13 @@ export const Facture: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 print:grid-cols-2 gap-2.5 my-1 flex-1 overflow-x-auto print:overflow-hidden">
               {/* Colonne Gauche (Articles 1 à N/2) */}
               <div className="border border-slate-200 rounded-lg overflow-x-auto print:overflow-hidden flex flex-col">
-                <table className="w-full min-w-[320px] sm:min-w-full text-left text-[9px] border-collapse">
+                <table className="w-full text-left text-[9px] border-collapse">
                   <thead>
                     <tr className="bg-slate-900 text-white uppercase text-[8px] tracking-wider leading-none whitespace-nowrap">
                       <th className="py-1 px-1.5 font-semibold text-center w-5">N°</th>
                       <th className="py-1 px-1.5 font-semibold">Désignation</th>
                       <th className="py-1 px-1 font-semibold text-center w-7">Qté</th>
-                      <th className="py-1 px-1 text-right w-12">P.U.</th>
+                      <th className="hidden sm:table-cell print:table-cell py-1 px-1 text-right w-12">P.U.</th>
                       <th className="py-1 px-1.5 text-right w-14">Total</th>
                     </tr>
                   </thead>
@@ -343,7 +343,7 @@ export const Facture: React.FC = () => {
                             {idx + 1}
                           </td>
                           <td className="py-0.5 px-1.5">
-                            <div className="font-semibold text-slate-900 leading-tight truncate max-w-[130px]">
+                            <div className="font-semibold text-slate-900 leading-tight truncate max-w-[140px]">
                               {item.name || item.product_name}
                             </div>
                             <div className="text-[7.5px] text-slate-400 font-medium">
@@ -353,7 +353,7 @@ export const Facture: React.FC = () => {
                           <td className="py-0.5 px-1 text-center font-bold text-slate-900 whitespace-nowrap">
                             {qty}
                           </td>
-                          <td className="py-0.5 px-1 text-right text-slate-700 whitespace-nowrap font-mono">
+                          <td className="hidden sm:table-cell print:table-cell py-0.5 px-1 text-right text-slate-700 whitespace-nowrap font-mono">
                             {unitPrice > 0 ? unitPrice.toLocaleString('fr-FR') : '—'}
                           </td>
                           <td className="py-0.5 px-1.5 text-right font-bold text-slate-900 whitespace-nowrap font-mono">
@@ -368,13 +368,13 @@ export const Facture: React.FC = () => {
 
               {/* Colonne Droite (Articles N/2+1 à Fin) */}
               <div className="border border-slate-200 rounded-lg overflow-x-auto print:overflow-hidden flex flex-col">
-                <table className="w-full min-w-[320px] sm:min-w-full text-left text-[9px] border-collapse">
+                <table className="w-full text-left text-[9px] border-collapse">
                   <thead>
                     <tr className="bg-slate-900 text-white uppercase text-[8px] tracking-wider leading-none whitespace-nowrap">
                       <th className="py-1 px-1.5 font-semibold text-center w-5">N°</th>
                       <th className="py-1 px-1.5 font-semibold">Désignation</th>
                       <th className="py-1 px-1 font-semibold text-center w-7">Qté</th>
-                      <th className="py-1 px-1 text-right w-12">P.U.</th>
+                      <th className="hidden sm:table-cell print:table-cell py-1 px-1 text-right w-12">P.U.</th>
                       <th className="py-1 px-1.5 text-right w-14">Total</th>
                     </tr>
                   </thead>
@@ -391,7 +391,7 @@ export const Facture: React.FC = () => {
                             {realIdx + 1}
                           </td>
                           <td className="py-0.5 px-1.5">
-                            <div className="font-semibold text-slate-900 leading-tight truncate max-w-[130px]">
+                            <div className="font-semibold text-slate-900 leading-tight truncate max-w-[140px]">
                               {item.name || item.product_name}
                             </div>
                             <div className="text-[7.5px] text-slate-400 font-medium">
@@ -401,7 +401,7 @@ export const Facture: React.FC = () => {
                           <td className="py-0.5 px-1 text-center font-bold text-slate-900 whitespace-nowrap">
                             {qty}
                           </td>
-                          <td className="py-0.5 px-1 text-right text-slate-700 whitespace-nowrap font-mono">
+                          <td className="hidden sm:table-cell print:table-cell py-0.5 px-1 text-right text-slate-700 whitespace-nowrap font-mono">
                             {unitPrice > 0 ? unitPrice.toLocaleString('fr-FR') : '—'}
                           </td>
                           <td className="py-0.5 px-1.5 text-right font-bold text-slate-900 whitespace-nowrap font-mono">
@@ -416,16 +416,16 @@ export const Facture: React.FC = () => {
             </div>
           ) : (
             /* ── AFFICHAGE STANDARD 1 COLONNE (POUR LES COMMANDES ORDINAIRES <= 12 ARTICLES) ── */
-            <div className="border border-slate-200 rounded-xl overflow-x-auto print:overflow-visible my-2 shrink-0">
-              <table className="w-full min-w-[500px] sm:min-w-full text-left text-xs border-collapse">
+            <div className="border border-slate-200 rounded-xl overflow-hidden print:overflow-visible my-2 shrink-0">
+              <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="bg-slate-900 text-white uppercase text-[10px] tracking-wider whitespace-nowrap">
-                    <th className="py-2 px-2.5 sm:px-3 font-semibold text-center w-9 sm:w-10">N°</th>
-                    <th className="py-2 px-2.5 sm:px-3 font-semibold min-w-[140px]">Désignation de l'article</th>
-                    <th className="py-2 px-2 sm:px-3 font-semibold text-center w-20 sm:w-24">Cond.</th>
-                    <th className="py-2 px-2 sm:px-3 font-semibold text-center w-12 sm:w-14">Qté</th>
-                    <th className="py-2 px-2.5 sm:px-3 font-semibold text-right w-24 sm:w-28">P.U. HT</th>
-                    <th className="py-2 px-2.5 sm:px-3 font-semibold text-right w-28 sm:w-32">Total HT</th>
+                  <tr className="bg-slate-900 text-white uppercase text-[9px] sm:text-[10px] tracking-wider whitespace-nowrap">
+                    <th className="py-2 px-2 sm:px-3 font-semibold text-center w-7 sm:w-10">N°</th>
+                    <th className="py-2 px-2 sm:px-3 font-semibold">Désignation de l'article</th>
+                    <th className="hidden sm:table-cell print:table-cell py-2 px-2 sm:px-3 font-semibold text-center w-20 sm:w-24">Cond.</th>
+                    <th className="py-2 px-1.5 sm:px-3 font-semibold text-center w-9 sm:w-14">Qté</th>
+                    <th className="hidden sm:table-cell print:table-cell py-2 px-2 sm:px-3 font-semibold text-right w-20 sm:w-28">P.U. HT</th>
+                    <th className="py-2 px-2 sm:px-3 font-semibold text-right w-20 sm:w-32">Total HT</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700">
@@ -436,18 +436,22 @@ export const Facture: React.FC = () => {
 
                     return (
                       <tr key={idx} className={idx % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'}>
-                        <td className="py-2 px-2.5 sm:px-3 text-center text-slate-400 font-bold text-[11px] whitespace-nowrap">{idx + 1}</td>
-                        <td className="py-2 px-2.5 sm:px-3 font-medium text-slate-900">
-                          {item.name || item.product_name}
+                        <td className="py-2 px-2 sm:px-3 text-center text-slate-400 font-bold text-[10px] sm:text-[11px] whitespace-nowrap">{idx + 1}</td>
+                        <td className="py-2 px-2 sm:px-3 font-medium text-slate-900">
+                          <div>{item.name || item.product_name}</div>
+                          <div className="sm:hidden print:hidden text-[9px] text-slate-400 font-normal mt-0.5">
+                            {item.conditionnement || item.unit || 'Boîte'}
+                            {unitPrice > 0 && ` • P.U: ${unitPrice.toLocaleString('fr-FR')} F`}
+                          </div>
                         </td>
-                        <td className="py-2 px-2 sm:px-3 text-center text-slate-500 text-[11px] whitespace-nowrap">
+                        <td className="hidden sm:table-cell print:table-cell py-2 px-2 sm:px-3 text-center text-slate-500 text-[11px] whitespace-nowrap">
                           {item.conditionnement || item.unit || 'Boîte'}
                         </td>
-                        <td className="py-2 px-2 sm:px-3 text-center font-bold text-slate-900 whitespace-nowrap">{qty}</td>
-                        <td className="py-2 px-2.5 sm:px-3 text-right text-slate-700 whitespace-nowrap font-mono">
+                        <td className="py-2 px-1.5 sm:px-3 text-center font-bold text-slate-900 whitespace-nowrap">{qty}</td>
+                        <td className="hidden sm:table-cell print:table-cell py-2 px-2 sm:px-3 text-right text-slate-700 whitespace-nowrap font-mono">
                           {unitPrice > 0 ? unitPrice.toLocaleString('fr-FR') : '—'}
                         </td>
-                        <td className="py-2 px-2.5 sm:px-3 text-right font-bold text-slate-900 whitespace-nowrap font-mono">
+                        <td className="py-2 px-2 sm:px-3 text-right font-bold text-slate-900 whitespace-nowrap font-mono">
                           {lineTotal > 0 ? lineTotal.toLocaleString('fr-FR') : '—'}
                         </td>
                       </tr>
