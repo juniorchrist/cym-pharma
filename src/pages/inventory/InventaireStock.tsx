@@ -37,6 +37,7 @@ export const InventaireStock: React.FC<InventaireStockProps> = ({ onOpenImport, 
   const [items, setItems] = useState<InventoryItemWithStatus[]>([]);
   const [stats, setStats] = useState<InventoryStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<ItemStatus | 'all'>('all');
   const [trackedOnly, setTrackedOnly] = useState<boolean>(true);
@@ -77,6 +78,7 @@ export const InventaireStock: React.FC<InventaireStockProps> = ({ onOpenImport, 
 
   const loadItems = useCallback(async () => {
     setLoading(true);
+    setError(null);
     const res = await InventaireService.getItems({
       search,
       status: statusFilter,
@@ -88,6 +90,8 @@ export const InventaireStock: React.FC<InventaireStockProps> = ({ onOpenImport, 
       setItems(res.data.items);
       setTotalPages(res.data.totalPages);
       setTotalCount(res.data.total);
+    } else {
+      setError(res.message || 'Impossible de contacter le serveur CYM Pharma pour charger les articles.');
     }
     setLoading(false);
   }, [search, statusFilter, trackedOnly, page]);
@@ -414,36 +418,63 @@ export const InventaireStock: React.FC<InventaireStockProps> = ({ onOpenImport, 
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
+                // SQUELETTE ANIMÉ PENDANT LE CHARGEMENT SERVEUR
+                Array.from({ length: 5 }).map((_, idx) => (
+                  <tr key={`skel-${idx}`} className="animate-pulse">
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 rounded w-16" /></td>
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 rounded w-48" /></td>
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 rounded w-20" /></td>
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 rounded w-16" /></td>
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 rounded w-10" /></td>
+                    <td className="py-4 px-4"><div className="h-3 w-3 bg-slate-200 rounded-full" /></td>
+                    <td className="py-4 px-4 text-right"><div className="h-6 bg-slate-200 rounded w-20 ml-auto" /></td>
+                  </tr>
+                ))
+              ) : error ? (
+                // MESSAGE D'ERREUR EXPLICITE AVEC BOUTON RÉESSAYER
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-400">
-                    <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-emerald-600" />
-                    Chargement des articles de stock...
+                  <td colSpan={7} className="py-12 px-4 text-center">
+                    <div className="max-w-md mx-auto p-6 rounded-2xl bg-red-50 border border-red-200 text-red-800 space-y-3">
+                      <AlertTriangle className="w-8 h-8 text-red-600 mx-auto" />
+                      <p className="font-bold text-sm">Échec du chargement des stocks</p>
+                      <p className="text-xs text-red-600">{error}</p>
+                      <button
+                        type="button"
+                        onClick={() => { loadStats(); loadItems(); }}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition cursor-pointer shadow-xs"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Réessayer</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ) : items.length === 0 ? (
+                // ÉTAT VIDE EXPLICITE AVEC BOUTON D'IMPORTATION
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-500">
-                    <div className="max-w-md mx-auto space-y-3">
-                      <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
-                        <FileSpreadsheet className="w-6 h-6" />
+                  <td colSpan={7} className="py-16 px-4 text-center">
+                    <div className="max-w-md mx-auto space-y-3 text-slate-500">
+                      <div className="w-14 h-14 rounded-3xl bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
+                        <FileSpreadsheet className="w-7 h-7" />
                       </div>
-                      <p className="font-semibold text-slate-800">
+                      <p className="font-extrabold text-base text-slate-800">
                         {totalCount === 0 && !search && statusFilter === 'all'
-                          ? "Votre catalogue d'inventaire est actuellement vide"
-                          : "Aucun article trouvé pour les critères sélectionnés"}
+                          ? "Aucun article dans l'inventaire"
+                          : "Aucun article ne correspond à votre recherche"}
                       </p>
-                      <p className="text-xs text-slate-500">
+                      <p className="text-xs text-slate-500 leading-relaxed">
                         {totalCount === 0 && !search && statusFilter === 'all'
-                          ? "Initialisez vos 306 articles officiels en important le Classeur1.xlsx du serveur ou téléversez votre fichier Excel personnalisé."
-                          : "Essayez de modifier votre recherche ou de réinitialiser les filtres."}
+                          ? "Votre stock est actuellement vide. Téléversez un classeur Excel pour importer votre catalogue d'articles."
+                          : "Essayez de modifier votre mot-clé ou de réinitialiser les filtres."}
                       </p>
-                      {totalCount === 0 && onOpenImport && (
+                      {onOpenImport && (
                         <button
+                          type="button"
                           onClick={onOpenImport}
-                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition cursor-pointer shadow-sm"
+                          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition cursor-pointer shadow-sm mt-2"
                         >
                           <FileSpreadsheet className="w-4 h-4" />
-                          <span>Accéder à l'import Excel</span>
+                          <span>Importer un classeur Excel</span>
                         </button>
                       )}
                     </div>

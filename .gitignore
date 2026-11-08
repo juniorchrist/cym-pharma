@@ -44,8 +44,9 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Test coverage
+# Test coverage & fixtures
 coverage/
+tests/fixtures/
 
 # OS and Editor files
 .DS_Store

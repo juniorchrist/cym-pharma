@@ -12,17 +12,19 @@ import {
   UpdateCountPayload,
   ImportPreviewResult,
   ImportCommitPayload,
+  ImportCommitResult,
   InventoryStats,
   ItemStatus,
 } from '../types/inventaire';
 import { storage } from '../utils/storage';
-import { getApiBaseUrl } from '../config/api';
+import { buildApiUrl, getApiBaseUrl } from '../config/api';
 
 interface ApiResponse<T> {
   success: boolean;
   data?: T;
   message?: string;
   error?: string;
+  status?: number;
 }
 
 async function inventoryRequest<T>(
@@ -33,6 +35,7 @@ async function inventoryRequest<T>(
   if (!token) {
     return {
       success: false,
+      status: 401,
       message: 'Session administrateur requise pour accéder au module d\'inventaire.',
     };
   }
@@ -44,27 +47,38 @@ async function inventoryRequest<T>(
 
   headers.set('Authorization', 'Bearer ' + token);
 
-  const baseUrl = getApiBaseUrl();
-  const url = endpoint.startsWith('http')
-    ? endpoint
-    : baseUrl + (endpoint.startsWith('/') ? '' : '/') + endpoint;
+  const url = buildApiUrl(endpoint);
 
   try {
     const res = await fetch(url, { ...options, headers });
     if (!res.ok) {
       const errBody = await res.json().catch(() => ({}));
+      let msg = errBody.message;
+      if (!msg) {
+        if (res.status === 401) msg = 'Session expirée ou non authentifiée (HTTP 401).';
+        else if (res.status === 403) msg = 'Accès refusé : privilèges administrateur requis (HTTP 403).';
+        else if (res.status === 413) msg = 'Lot trop volumineux pour le serveur (HTTP 413).';
+        else if (res.status === 422) msg = 'Format de données invalide (HTTP 422).';
+        else if (res.status === 500) msg = 'Erreur interne du serveur (HTTP 500).';
+        else msg = 'Erreur HTTP ' + res.status;
+      }
       return {
         success: false,
-        message: errBody.message || ('Erreur HTTP ' + res.status),
+        status: res.status,
+        message: msg,
       };
     }
     const data = (await res.json()) as ApiResponse<T>;
-    return data;
+    return { ...data, status: res.status };
   } catch (err: any) {
     console.warn('[InventaireAPI] Echec reseau sur ' + endpoint + ':', err?.message);
+    const isNetwork = !navigator.onLine || err?.message?.includes('fetch') || err?.message?.includes('NetworkError');
     return {
       success: false,
-      message: err?.message || 'Erreur de connexion serveur',
+      status: 0,
+      message: isNetwork
+        ? 'Impossible de contacter le serveur CYM Pharma (Erreur réseau / CORS). Vérifiez votre connexion.'
+        : (err?.message || 'Erreur inattendue de communication avec le serveur.'),
     };
   }
 }
@@ -196,18 +210,11 @@ export const InventaireService = {
   },
 
   async exportPeriodCsvUrl(periodId: string): Promise<string> {
-    const baseUrl = getApiBaseUrl();
     const token = storage.getAuthToken() || 'admin_jwt_local_demo';
-    return baseUrl + '/api/admin/inventory/periods/' + periodId + '/export?token=' + encodeURIComponent(token);
+    return buildApiUrl('/api/admin/inventory/periods/' + periodId + '/export') + '?token=' + encodeURIComponent(token);
   },
 
-  // Import XLSX / Classeur
-  async previewImportFromServer(): Promise<ApiResponse<ImportPreviewResult>> {
-    return inventoryRequest<ImportPreviewResult>('/api/admin/inventory/import/preview-server-file', {
-      method: 'POST',
-    });
-  },
-
+  // Import XLSX / CSV (Traitement côté navigateur puis commit serveur)
   async previewImportRows(rows: any[]): Promise<ApiResponse<ImportPreviewResult>> {
     return inventoryRequest<ImportPreviewResult>('/api/admin/inventory/import/preview', {
       method: 'POST',
@@ -215,16 +222,8 @@ export const InventaireService = {
     });
   },
 
-  async commitImport(payload: ImportCommitPayload): Promise<ApiResponse<{
-    imported_count: number;
-    tracked_count: number;
-    movements_created: number;
-  }>> {
-    return inventoryRequest<{
-      imported_count: number;
-      tracked_count: number;
-      movements_created: number;
-    }>('/api/admin/inventory/import/commit', {
+  async commitImport(payload: ImportCommitPayload): Promise<ApiResponse<ImportCommitResult>> {
+    return inventoryRequest<ImportCommitResult>('/api/admin/inventory/import/commit', {
       method: 'POST',
       body: JSON.stringify(payload),
     });

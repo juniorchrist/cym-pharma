@@ -133,7 +133,16 @@ export interface ImportPreviewResult {
   duplicates: number;
   negative: number;
   zero_stock: number;
+  ignored?: number;
   rows: ImportPreviewRow[];
+}
+
+export interface ImportCommitResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  total_processed: number;
+  movements_created: number;
 }
 
 export interface ImportCommitPayload {

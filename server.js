@@ -48,12 +48,14 @@ const ALLOWED_ORIGINS = new Set([
   'http://127.0.0.1:3000',
   'http://127.0.0.1:4173',
   'http://127.0.0.1:5173',
+  'http://192.168.100.29:3000',
   ...CORS_ORIGINS_ENV,
 ]);
 
 app.use((req, res, next) => {
   const origin = req.headers.origin || '';
-  const isLocalDev = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  // Autorise localhost, 127.0.0.1 ainsi que les IPs locales privées de dev (192.168.*, 10.*, 172.16-31.*)
+  const isLocalDev = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/.test(origin);
   const isAllowed = ALLOWED_ORIGINS.has(origin) || origin.endsWith('.infinityfreeapp.com') || isLocalDev;
 
   if (isAllowed && origin) {

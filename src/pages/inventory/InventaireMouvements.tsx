@@ -16,11 +16,16 @@ import { MovementWithItem, MovementType, CreateMovementPayload, InventoryItemWit
 import { InventaireService } from '../../services/inventaire';
 import { useToast } from '../../context/ToastContext';
 
-export const InventaireMouvements: React.FC = () => {
+interface InventaireMouvementsProps {
+  onOpenImport?: () => void;
+}
+
+export const InventaireMouvements: React.FC<InventaireMouvementsProps> = ({ onOpenImport }) => {
   const { showToast } = useToast();
   const [movements, setMovements] = useState<MovementWithItem[]>([]);
   const [items, setItems] = useState<InventoryItemWithStatus[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
 
@@ -34,12 +39,15 @@ export const InventaireMouvements: React.FC = () => {
 
   const loadMovements = useCallback(async () => {
     setLoading(true);
+    setError(null);
     const res = await InventaireService.getMovements({
       type: typeFilter !== 'all' ? typeFilter : undefined,
       limit: 200,
     });
     if (res.success && res.data) {
       setMovements(res.data.movements);
+    } else {
+      setError(res.message || 'Impossible de contacter le serveur CYM Pharma pour charger les mouvements.');
     }
     setLoading(false);
   }, [typeFilter]);
@@ -229,16 +237,57 @@ export const InventaireMouvements: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
+                Array.from({ length: 5 }).map((_, idx) => (
+                  <tr key={`skel-mvt-${idx}`} className="animate-pulse">
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 rounded w-20" /></td>
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 rounded w-48" /></td>
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 rounded w-24" /></td>
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 rounded w-32" /></td>
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 rounded w-16" /></td>
+                  </tr>
+                ))
+              ) : error ? (
                 <tr>
-                  <td colSpan={5} className="py-12 text-center text-slate-400">
-                    <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-emerald-600" />
-                    Chargement du journal des stocks...
+                  <td colSpan={5} className="py-12 px-4 text-center">
+                    <div className="max-w-md mx-auto p-6 rounded-2xl bg-red-50 border border-red-200 text-red-800 space-y-3">
+                      <AlertTriangle className="w-8 h-8 text-red-600 mx-auto" />
+                      <p className="font-bold text-sm">Échec du chargement des mouvements</p>
+                      <p className="text-xs text-red-600">{error}</p>
+                      <button
+                        type="button"
+                        onClick={loadMovements}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition cursor-pointer shadow-xs"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Réessayer</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ) : filteredMovements.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-12 text-center text-slate-400">
-                    Aucun mouvement enregistré pour cette sélection.
+                  <td colSpan={5} className="py-16 px-4 text-center">
+                    <div className="max-w-md mx-auto space-y-3 text-slate-500">
+                      <div className="w-14 h-14 rounded-3xl bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
+                        <RotateCcw className="w-7 h-7" />
+                      </div>
+                      <p className="font-extrabold text-base text-slate-800">
+                        Aucun mouvement de stock enregistré
+                      </p>
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        Le journal des flux est vide. Les entrées et sorties s'enregistreront automatiquement lors des commandes, des ajustements ou de l'import d'un classeur.
+                      </p>
+                      {onOpenImport && (
+                        <button
+                          type="button"
+                          onClick={onOpenImport}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition cursor-pointer shadow-sm mt-2"
+                        >
+                          <Plus className="w-4 h-4" />
+                          <span>Importer un classeur de stock</span>
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ) : (

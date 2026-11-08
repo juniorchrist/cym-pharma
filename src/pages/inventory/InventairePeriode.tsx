@@ -21,7 +21,11 @@ import {
 import { InventaireService } from '../../services/inventaire';
 import { useToast } from '../../context/ToastContext';
 
-export const InventairePeriode: React.FC = () => {
+interface InventairePeriodeProps {
+  onOpenImport?: () => void;
+}
+
+export const InventairePeriode: React.FC<InventairePeriodeProps> = ({ onOpenImport }) => {
   const { showToast } = useToast();
   const [periods, setPeriods] = useState<PeriodWithCounts[]>([]);
   const [activePeriod, setActivePeriod] = useState<InventoryPeriod | null>(null);
@@ -29,6 +33,7 @@ export const InventairePeriode: React.FC = () => {
     (InventoryCount & { designation: string; unit_label: string; code: string })[]
   >([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filterMode, setFilterMode] = useState<'all' | 'uncounted' | 'counted' | 'variance'>('all');
   const [search, setSearch] = useState('');
 
@@ -42,6 +47,7 @@ export const InventairePeriode: React.FC = () => {
 
   const loadPeriods = useCallback(async () => {
     setLoading(true);
+    setError(null);
     const res = await InventaireService.getPeriods();
     if (res.success && res.data) {
       setPeriods(res.data);
@@ -54,6 +60,8 @@ export const InventairePeriode: React.FC = () => {
         setActivePeriod(res.data[0]);
         loadCounts(res.data[0].id);
       }
+    } else {
+      setError(res.message || 'Impossible de charger les périodes d\'inventaire.');
     }
     setLoading(false);
   }, []);
@@ -349,16 +357,74 @@ export const InventairePeriode: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
+                Array.from({ length: 5 }).map((_, idx) => (
+                  <tr key={`skel-cnt-${idx}`} className="animate-pulse">
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 rounded w-16" /></td>
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 rounded w-48" /></td>
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 rounded w-20" /></td>
+                    <td className="py-4 px-4 text-center"><div className="h-4 bg-slate-200 rounded w-12 mx-auto" /></td>
+                    <td className="py-4 px-4 text-center"><div className="h-8 bg-slate-200 rounded w-20 mx-auto" /></td>
+                    <td className="py-4 px-4 text-center"><div className="h-4 bg-slate-200 rounded w-10 mx-auto" /></td>
+                    <td className="py-4 px-4"><div className="h-4 bg-slate-200 rounded w-24" /></td>
+                  </tr>
+                ))
+              ) : error ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-400">
-                    <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-emerald-600" />
-                    Chargement de l'inventaire en cours...
+                  <td colSpan={7} className="py-12 px-4 text-center">
+                    <div className="max-w-md mx-auto p-6 rounded-2xl bg-red-50 border border-red-200 text-red-800 space-y-3">
+                      <AlertTriangle className="w-8 h-8 text-red-600 mx-auto" />
+                      <p className="font-bold text-sm">Échec du chargement de l'inventaire</p>
+                      <p className="text-xs text-red-600">{error}</p>
+                      <button
+                        type="button"
+                        onClick={loadPeriods}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition cursor-pointer shadow-xs"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Réessayer</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ) : filteredCounts.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-400">
-                    Aucun article correspondant aux filtres.
+                  <td colSpan={7} className="py-16 px-4 text-center">
+                    <div className="max-w-md mx-auto space-y-3 text-slate-500">
+                      <div className="w-14 h-14 rounded-3xl bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
+                        <Calendar className="w-7 h-7" />
+                      </div>
+                      <p className="font-extrabold text-base text-slate-800">
+                        {!activePeriod
+                          ? "Aucune période d'inventaire ouverte"
+                          : "Aucun article correspondant aux critères"}
+                      </p>
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        {!activePeriod
+                          ? "Démarrez une nouvelle session d'inventaire mensuel pour effectuer le comptage physique de votre stock."
+                          : "Aucun article ne correspond à vos filtres actuels."}
+                      </p>
+                      {!activePeriod && (
+                        <div className="flex items-center justify-center gap-3 pt-2">
+                          <button
+                            type="button"
+                            onClick={() => setIsStartModalOpen(true)}
+                            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition cursor-pointer shadow-sm"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>Démarrer un inventaire</span>
+                          </button>
+                          {onOpenImport && (
+                            <button
+                              type="button"
+                              onClick={onOpenImport}
+                              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition cursor-pointer"
+                            >
+                              <span>Importer un classeur</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ) : (

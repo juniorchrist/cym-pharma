@@ -13,7 +13,11 @@ import { PeriodWithCounts } from '../../types/inventaire';
 import { InventaireService } from '../../services/inventaire';
 import { useToast } from '../../context/ToastContext';
 
-export const InventaireHistorique: React.FC = () => {
+interface InventaireHistoriqueProps {
+  onOpenImport?: () => void;
+}
+
+export const InventaireHistorique: React.FC<InventaireHistoriqueProps> = ({ onOpenImport }) => {
   const { showToast } = useToast();
   const [periods, setPeriods] = useState<PeriodWithCounts[]>([]);
   const [loading, setLoading] = useState(true);
